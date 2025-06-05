@@ -1,0 +1,11 @@
+# Setup development environment
+make dev
+
+# Run quality checks
+make check
+
+# Run tests
+make test
+
+# Format code
+make format
