@@ -6,7 +6,6 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
 from ..models.project import ProjectConfig, ProjectMetadata, StageStatus, StageStatusEnum
 from ..models.brand import BrandContext
 from ..utils.config import get_config
@@ -16,6 +15,7 @@ from ..utils.exceptions import (
 )
 from ..utils.logging import get_logger
 from ..utils.security import SecurityValidator
+from uuid import uuid4
 
 
 logger = get_logger(__name__)

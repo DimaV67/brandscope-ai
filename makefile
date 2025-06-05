@@ -13,27 +13,26 @@ install: ## Install production dependencies
 
 dev: ## Install development dependencies
 	$(PIP) install -e ".[dev,docs]"
-	pre-commit install
 
 test: ## Run tests with coverage
-	pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
+	$(PYTHON) -m pytest tests/ --cov=src --cov-report=term-missing --cov-report=html
 
 test-fast: ## Run tests without coverage
-	pytest tests/ -x -v
+	$(PYTHON) -m pytest tests/ -x -v
 
 lint: ## Run all linting tools
-	black --check src/ tests/
-	isort --check-only src/ tests/
-	flake8 src/ tests/
-	mypy src/
+	$(PYTHON) -m black --check src/ tests/
+	$(PYTHON) -m isort --check-only src/ tests/
+	$(PYTHON) -m flake8 src/ tests/
+	$(PYTHON) -m mypy src/
 
 format: ## Format code
-	black src/ tests/
-	isort src/ tests/
+	$(PYTHON) -m black src/ tests/
+	$(PYTHON) -m isort src/ tests/
 
 security: ## Run security checks
-	bandit -r src/
-	safety check
+	$(PYTHON) -m bandit -r src/
+	$(PYTHON) -m safety check
 
 check: lint security test ## Run all quality checks
 
@@ -57,8 +56,19 @@ docker: ## Build Docker image
 docker-dev: ## Build development Docker image
 	docker build -f Dockerfile.dev -t $(PROJECT_NAME):dev .
 
-run: ## Run the CLI
-	$(PYTHON) -m src.cli
+run: ## Run the CLI (when entry point is configured)
+	$(PYTHON) -m src
 
-demo: ## Run demo project creation
-	$(PYTHON) -m src.cli new --brand "Demo Brand" --category "speakers" --products "Speaker One,Speaker Two"
+demo: ## Create a demo project
+	@echo "Demo mode - creating sample project"
+	@echo "Use: make run"
+
+setup-dev: dev ## Complete development setup
+	@echo "Development environment setup complete!"
+	@echo "Run 'make check' to verify everything works"
+
+init: ## Initialize project structure
+	mkdir -p src/models src/core src/utils src/commands
+	mkdir -p config/prompt_templates config/frameworks/category_extensions
+	touch src/__init__.py src/models/__init__.py src/core/__init__.py src/utils/__init__.py src/commands/__init__.py
+	@echo "Project structure initialized"

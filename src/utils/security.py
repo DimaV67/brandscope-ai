@@ -4,6 +4,7 @@ Security utilities and validation functions.
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -70,7 +71,7 @@ class SecurityValidator:
     
     def sanitize_input(self, user_input: str) -> str:
         """Sanitize user input for basic security."""
-        # Remove potential HTML/script tags
+        # Remove potential HTML/script tags and dangerous characters
         dangerous_chars = ['<', '>', '&', '"', "'", '`']
         sanitized = user_input
         for char in dangerous_chars:
@@ -79,9 +80,28 @@ class SecurityValidator:
     
     def generate_secure_filename(self, original_name: str) -> str:
         """Generate secure filename."""
-        # Keep only alphanumeric, dots, hyphens, underscores
-        safe_name = ''.join(c for c in original_name if c.isalnum() or c in '.-_')
-        return safe_name[:100]  # Limit length
+        # Remove path traversal patterns first
+        safe_name = original_name.replace('../', '').replace('..\\', '')
+        
+        # Remove HTML/script tags completely
+        safe_name = re.sub(r'<script[^>]*>.*?</script>', '', safe_name, flags=re.IGNORECASE)
+        safe_name = re.sub(r'<[^>]*>', '', safe_name)
+        
+        # Remove dangerous characters but keep letters, numbers, dots, hyphens, underscores
+        # Note: We keep dots here, so file.txt stays file.txt
+        safe_name = re.sub(r'[^a-zA-Z0-9.\-_]', '', safe_name)
+        
+        # Remove leading dots to prevent hidden files
+        safe_name = safe_name.lstrip('.')
+        
+        # Clean up multiple consecutive dots AFTER other cleaning
+        safe_name = re.sub(r'\.{2,}', '.', safe_name)
+        
+        # Handle empty result
+        if not safe_name:
+            safe_name = 'safe_file'
+        
+        return safe_name[:100]
     
     def create_hmac_signature(self, data: str) -> str:
         """Create HMAC signature for data integrity."""

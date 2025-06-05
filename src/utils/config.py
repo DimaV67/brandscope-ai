@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from .security import SecurityConfig
 
@@ -32,7 +32,8 @@ class AppConfig(BaseModel):
     # Security
     security: SecurityConfig = Field(default_factory=SecurityConfig.from_env)
     
-    @validator('environment')
+    @field_validator('environment')
+    @classmethod
     def validate_environment(cls, v: str) -> str:
         """Validate environment setting."""
         allowed = {'development', 'staging', 'production', 'testing'}
@@ -40,7 +41,8 @@ class AppConfig(BaseModel):
             raise ValueError(f"Environment must be one of: {allowed}")
         return v
     
-    @validator('log_level')
+    @field_validator('log_level')
+    @classmethod
     def validate_log_level(cls, v: str) -> str:
         """Validate log level."""
         allowed = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}

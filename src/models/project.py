@@ -4,10 +4,10 @@ Project configuration and metadata models with security validation.
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import validators
 
 
@@ -30,7 +30,8 @@ class ProjectMetadata(BaseModel):
     last_modified: datetime = Field(default_factory=datetime.now)
     version: str = Field(default="1.0.0")
     
-    @validator('project_id')
+    @field_validator('project_id')
+    @classmethod
     def validate_project_id(cls, v: str) -> str:
         """Validate project ID for security (no path traversal)."""
         if '..' in v or '/' in v or '\\' in v:
@@ -39,7 +40,8 @@ class ProjectMetadata(BaseModel):
             raise ValueError("Project ID must be alphanumeric with underscores/hyphens")
         return v.lower()
     
-    @validator('brand', 'category')
+    @field_validator('brand', 'category')
+    @classmethod
     def validate_string_fields(cls, v: str) -> str:
         """Validate string fields for basic security."""
         if any(char in v for char in ['<', '>', '&', '"', "'"]):
@@ -57,7 +59,8 @@ class StageStatus(BaseModel):
     error_message: Optional[str] = None
     retry_count: int = Field(default=0, ge=0, le=5)
     
-    @validator('outputs')
+    @field_validator('outputs')
+    @classmethod
     def validate_outputs(cls, v: List[str]) -> List[str]:
         """Validate output file paths for security."""
         validated = []
@@ -83,7 +86,8 @@ class ProjectConfig(BaseModel):
         default_factory=dict
     )
     
-    @validator('stage_status')
+    @field_validator('stage_status')
+    @classmethod
     def validate_stages(cls, v: Dict[str, StageStatus]) -> Dict[str, StageStatus]:
         """Validate stage configuration."""
         required_stages = {"stage1", "stage2", "stage3"}
@@ -92,14 +96,12 @@ class ProjectConfig(BaseModel):
             raise ValueError(f"Missing required stages: {missing}")
         return v
     
-    @root_validator
-    def validate_config_consistency(cls, values: Dict) -> Dict:
+    @model_validator(mode='after')
+    def validate_config_consistency(self) -> 'ProjectConfig':
         """Validate overall configuration consistency."""
-        metadata = values.get('project_metadata')
-        if metadata:
-            # Update last_modified when config changes
-            values['project_metadata'].last_modified = datetime.now()
-        return values
+        # Update last_modified when config changes
+        self.project_metadata.last_modified = datetime.now()
+        return self
     
     class Config:
         """Pydantic configuration."""

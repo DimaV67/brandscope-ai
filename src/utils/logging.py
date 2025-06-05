@@ -117,7 +117,11 @@ class ContextAwareLogger:
     def _log_with_context(self, level: int, message: str, **kwargs: Any) -> None:
         """Log message with context."""
         extra = {**self._context, **kwargs}
-        self.logger.log(level, message, extra=extra)
+        
+        # Handle exc_info separately to avoid conflicts
+        exc_info = extra.pop('exc_info', False)
+        
+        self.logger.log(level, message, extra=extra, exc_info=exc_info)
     
     def debug(self, message: str, **kwargs: Any) -> None:
         """Log debug message."""
