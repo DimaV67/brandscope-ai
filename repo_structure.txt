@@ -1,0 +1,116 @@
+.
+├── bash.example
+├── cache
+├── config
+│   ├── frameworks
+│   │   └── category_extensions
+│   └── prompt_templates
+├── debug_filename.py
+├── docs
+├── htmlcov
+│   ├── class_index.html
+│   ├── coverage_html_cb_6fb7b396.js
+│   ├── favicon_32_cb_58284776.png
+│   ├── function_index.html
+│   ├── index.html
+│   ├── keybd_closed_cb_ce680311.png
+│   ├── status.json
+│   ├── style_cb_8e611ae1.css
+│   ├── z_0618756b1ff51bca_project_manager_py.html
+│   ├── z_145eef247bfb46b6___init___py.html
+│   ├── z_145eef247bfb46b6_cli_py.html
+│   ├── z_145eef247bfb46b6_init_py.html
+│   ├── z_145eef247bfb46b6_main_py.html
+│   ├── z_5a01581697e5750b___init___py.html
+│   ├── z_5fe28016152b5824___init___py.html
+│   ├── z_5fe28016152b5824_archetype_builder_py.html
+│   ├── z_5fe28016152b5824_attribute_extractor_py.html
+│   ├── z_5fe28016152b5824_init_py.html
+│   ├── z_5fe28016152b5824_prompt_generator_py.html
+│   ├── z_5fe28016152b5824_query_generator_py.html
+│   ├── z_d0ce3572df7c0536___init___py.html
+│   ├── z_defad1a87623d8bf_brand_py.html
+│   ├── z_defad1a87623d8bf_project_py.html
+│   ├── z_f1b38b22aeb65474___init___py.html
+│   ├── z_f1b38b22aeb65474_config_py.html
+│   ├── z_f1b38b22aeb65474_exceptions_py.html
+│   ├── z_f1b38b22aeb65474_logging_py.html
+│   └── z_f1b38b22aeb65474_security_py.html
+├── logs
+│   ├── application.log
+│   ├── errors.log
+│   └── operations.log
+├── makefile
+├── project-clean.zip
+├── projects
+│   ├── testcorp_speakers_20250605
+│   │   ├── inputs
+│   │   ├── project_config.json
+│   │   ├── reports
+│   │   ├── stage1_outputs
+│   │   ├── stage2_execution
+│   │   └── stage3_analysis
+│   └── wonderful_pistachios_20250605
+│       ├── inputs
+│       ├── project_config.json
+│       ├── reports
+│       ├── stage1_outputs
+│       ├── stage2_execution
+│       └── stage3_analysis
+├── pyproject.toml
+├── README.md
+├── repo_structure.txt
+├── requirements.txt
+├── src
+│   ├── __init__.py
+│   ├── cli.py
+│   ├── commands
+│   │   ├── init.py
+│   │   └── stage1.py
+│   ├── core
+│   │   ├── init.py
+│   │   └── project_manager.py
+│   ├── init.py
+│   ├── main.py
+│   ├── models
+│   │   ├── brand.py
+│   │   ├── init.py
+│   │   └── project.py
+│   ├── stage1
+│   │   ├── __init__.py
+│   │   ├── archetype_builder.py
+│   │   ├── attribute_extractor.py
+│   │   ├── init.py
+│   │   ├── prompt_generator.py
+│   │   └── query_generator.py
+│   ├── stage2
+│   │   └── __init__.py
+│   ├── stage3
+│   │   └── __init__.py
+│   └── utils
+│       ├── __init__.py
+│       ├── config.py
+│       ├── exceptions.py
+│       ├── logging.py
+│       └── security.py
+├── test_error_handling.py
+├── test_error_simple.py
+├── test_filename_fix.py
+├── test_stage1_manual.py
+├── test_stage1_simple.py
+└── tests
+    ├── __init__.py
+    ├── conftest.py
+    ├── e2e
+    │   └── __init__.py
+    ├── integration
+    │   ├── __init__.py
+    │   └── test_stage1_orchestration.py
+    ├── test_basic.py
+    ├── test_security.py
+    └── unit
+        ├── __init__.py
+        ├── init.py
+        └── test_models.py
+
+34 directories, 80 files
