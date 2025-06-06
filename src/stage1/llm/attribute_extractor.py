@@ -256,6 +256,7 @@ class LLMAttributeExtractor:
         
         request = LLMRequest(
             prompt=prompt,
+            model="codellama",
             temperature=0.3,
             max_tokens=800,
             system_prompt="You are a market research expert. Always respond with valid JSON."
@@ -289,6 +290,7 @@ class LLMAttributeExtractor:
         
         request = LLMRequest(
             prompt=prompt,
+            model="codellama",
             temperature=0.2,
             max_tokens=600,
             system_prompt="You are a competitive intelligence expert. Always respond with valid JSON."
@@ -337,6 +339,7 @@ class LLMAttributeExtractor:
         
         request = LLMRequest(
             prompt=prompt,
+            model="codellama",
             temperature=0.1,
             max_tokens=400,
             system_prompt="You are a customer psychology expert. Map categories to universal behavioral attributes with valid JSON."
@@ -383,6 +386,7 @@ Make attributes relevant to actual {category} customer behavior."""
         
         request = LLMRequest(
             prompt=prompt,
+            model="codellama",
             temperature=0.2,
             max_tokens=300,
             system_prompt="Generate category-specific behavioral attributes as valid JSON."

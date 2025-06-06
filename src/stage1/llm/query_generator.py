@@ -268,6 +268,7 @@ class LLMQueryGenerator:
             
             request = LLMRequest(
                 prompt=prompt,
+                model="mistral",
                 temperature=0.7,
                 max_tokens=800,
                 system_prompt="You are a customer behavior expert. Generate authentic, natural customer queries."
@@ -324,6 +325,7 @@ class LLMQueryGenerator:
         
         request = LLMRequest(
             prompt=prompt,
+            model="mistral",
             temperature=0.6,
             max_tokens=1000,
             system_prompt="Generate diverse, authentic customer queries covering all research intents."
@@ -418,6 +420,7 @@ class LLMQueryGenerator:
         
         request = LLMRequest(
             prompt=prompt,
+            model="mistral",
             temperature=0.4,
             max_tokens=1200,
             system_prompt="Refine customer queries for maximum authenticity and brand research effectiveness."

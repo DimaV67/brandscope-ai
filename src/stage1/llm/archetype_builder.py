@@ -22,42 +22,45 @@ logger = get_logger(__name__)
 class ArchetypePrompts:
     """Structured prompts for archetype generation"""
     
-    ARCHETYPE_GENERATION = """You are a customer psychology expert analyzing the {category} market for {brand_name}.
+    # CHANGED: Implemented "Intelligence Sandwich" and "Chain-of-Thought Validation"
+    ARCHETYPE_GENERATION = """
+CRITICAL CONTEXT: You are a customer psychology expert analyzing the {category} market for {brand_name}. Your entire analysis MUST be based on the following verified intelligence.
 
-Category Intelligence:
-{category_intelligence}
+---BEGIN VERIFIED INTELLIGENCE---
+{rag_context_summary}
+---END VERIFIED INTELLIGENCE---
 
-Brand Context:
-- Competitors: {competitors}
-- Positioning: {positioning}
+Based *only* on the verified intelligence provided, generate 3-5 distinct customer archetypes for this brand using the following JSON format.
 
-Generate 3-5 distinct customer archetypes for this brand using this JSON format:
+JSON OUTPUT FORMAT:
 {{
     "archetypes": [
         {{
             "archetype_id": "ARCH_001",
             "name": "Descriptive Customer Name",
-            "description": "Detailed description of customer psychology and behavior",
+            "description": "Detailed description of customer psychology and behavior based on the verified intelligence.",
             "attributes": {{
                 "COREB1": "primary_behavior_from_universal_set",
                 "MODIFIERE1": "primary_identity_from_universal_set", 
                 "MODIFIERD3": "price_tier_from_BUDGET_MIDRANGE_PREMIUM",
                 "COREA2": "shopping_style_from_universal_set",
                 "DEMOD2": "lifestyle_from_universal_set",
-                "COREB3": "brand_preference_from_universal_set"
+                "COREB3": "brand_preference_from_universal_set",
+                "reasoning": "A brief explanation of why this combination of attributes was chosen, citing specific points from the verified intelligence."
             }},
             "market_presence": "HIGH|MEDIUM|LOW",
             "strategic_value": "HIGH|MEDIUM|LOW", 
             "confidence": 0.0-1.0,
-            "ai_behavior_prediction": "How this archetype behaves when researching products with AI"
+            "ai_behavior_prediction": "How this archetype behaves when researching products with AI, based on their attributes."
         }}
     ]
 }}
 
-Universal Attributes Available:
+Universal Attributes Available for reference:
 {universal_attributes}
 
-Focus on creating distinct, actionable customer personas that would research {category} products differently."""
+FINAL REQUIREMENT: All generated archetypes and their attributes must be directly supported by the CRITICAL CONTEXT provided. Justify your attribute choices in the 'reasoning' field.
+"""
 
     ARCHETYPE_RANKING = """Rank these customer archetypes by strategic importance for {brand_name} in the {category} market.
 
@@ -252,15 +255,13 @@ class LLMArchetypeBuilder:
     ) -> List[Dict[str, Any]]:
         """Generate initial customer archetypes."""
         
-        # Prepare category intelligence summary
-        intelligence_summary = self._summarize_category_intelligence(category_intelligence)
+        # CHANGED: Use helper to create summary for the "Intelligence Sandwich"
+        rag_context_summary = self._summarize_category_intelligence(category_intelligence)
         
         prompt = self.prompts.ARCHETYPE_GENERATION.format(
             category=category_intelligence.get("category", "product"),
             brand_name=brand_context.brand_name,
-            category_intelligence=intelligence_summary,
-            competitors=", ".join(brand_context.competitive_context.primary_competitors),
-            positioning=getattr(brand_context, 'brand_positioning', 'Not specified'),
+            rag_context_summary=rag_context_summary, # CHANGED
             universal_attributes=json.dumps(
                 category_intelligence.get("universal_attributes", {}), 
                 indent=2
@@ -269,9 +270,10 @@ class LLMArchetypeBuilder:
         
         request = LLMRequest(
             prompt=prompt,
+            model="llama3.2",
             temperature=0.4,
-            max_tokens=1200,
-            system_prompt="You are a customer psychology expert. Create distinct, realistic customer archetypes with valid JSON."
+            max_tokens=1500, # Increased tokens for reasoning
+            system_prompt="You are a customer psychology expert. Create distinct, realistic customer archetypes with valid JSON, justifying your choices."
         )
         
         response = await client.generate(request)
@@ -302,6 +304,7 @@ class LLMArchetypeBuilder:
         
         request = LLMRequest(
             prompt=prompt,
+            model="llama3.2",
             temperature=0.3,
             max_tokens=800,
             system_prompt="You are an AI behavior specialist. Predict how different customer types interact with AI assistants."
@@ -336,6 +339,7 @@ class LLMArchetypeBuilder:
         
         request = LLMRequest(
             prompt=prompt,
+            model="llama3.2",
             temperature=0.2,
             max_tokens=600,
             system_prompt="You are a strategic marketing expert. Rank customer archetypes by business value."
@@ -364,25 +368,31 @@ class LLMArchetypeBuilder:
             "strategic_insights": ["Focus on top-ranked archetypes for initial execution"]
         }
     
+    # ADDED: Helper function for the "Intelligence Sandwich"
     def _summarize_category_intelligence(self, intelligence: Dict[str, Any]) -> str:
-        """Create a concise summary of category intelligence for prompts."""
+        """Create a concise summary of category intelligence for the prompt context."""
         summary_parts = []
         
-        if intelligence.get("category_insights"):
-            insights = intelligence["category_insights"]
-            if insights.get("characteristics"):
-                summary_parts.append(f"Category: {insights['characteristics']}")
-            if insights.get("customer_segments"):
-                segments = [seg.get("segment_name", "Unknown") for seg in insights["customer_segments"][:3]]
-                summary_parts.append(f"Key Segments: {', '.join(segments)}")
+        # Add category characteristics
+        if insights := intelligence.get("category_insights"):
+            if characteristics := insights.get("characteristics"):
+                summary_parts.append(f"Category Characteristics: {json.dumps(characteristics)}")
+            if segments := insights.get("customer_segments"):
+                segment_summary = [
+                    f"{seg.get('segment_name', 'Unknown Segment')} (Motivations: {', '.join(seg.get('key_motivations', []))})"
+                    for seg in segments[:3]
+                ]
+                summary_parts.append(f"Key Customer Segments: {'; '.join(segment_summary)}")
+
+        # Add competitive landscape
+        if landscape := intelligence.get("competitive_landscape"):
+            competitors = landscape.get("primary_competitors", [])
+            summary_parts.append(f"Primary Competitors: {', '.join(competitors)}")
+            if opportunities := landscape.get("positioning_opportunities"):
+                opp_summary = [opp.get("opportunity", "Unknown") for opp in opportunities[:2]]
+                summary_parts.append(f"Positioning Opportunities: {', '.join(opp_summary)}")
         
-        if intelligence.get("competitive_landscape"):
-            landscape = intelligence["competitive_landscape"]
-            if landscape.get("positioning_opportunities"):
-                opps = [opp.get("opportunity", "Unknown") for opp in landscape["positioning_opportunities"][:2]]
-                summary_parts.append(f"Opportunities: {', '.join(opps)}")
-        
-        return "\n".join(summary_parts) if summary_parts else "Limited category intelligence available"
+        return "\n".join(summary_parts) if summary_parts else "No specific category intelligence provided."
     
     def _merge_behavioral_refinements(
         self,
