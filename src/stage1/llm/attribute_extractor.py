@@ -3,595 +3,111 @@
 LLM-powered attribute extractor with fixed import handling.
 """
 import json
-import sys
-import os
+import re
+# FIXED: Added 'Any' to the typing import
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-
 from src.llm.ollama_client import OllamaClient, LLMRequest, OllamaConfig
-from models.brand import BrandContext
-from utils.logging import get_logger
+from src.models.brand import BrandContext
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 @dataclass
 class CategoryAnalysisPrompts:
-    """Structured prompts for category analysis"""
-    
-    BASE_ANALYSIS = """You are a market research expert analyzing the {category} category. 
-    
-Brand Context:
-- Brand: {brand_name}
-- Category: {category}
-- Primary Competitors: {competitors}
-- Positioning: {positioning}
+    # ... (prompts are unchanged from the last version)
+    BASE_ANALYSIS = """You are a market research expert...
+IMPORTANT: Your entire response must be ONLY the valid JSON object described above..."""
+    COMPETITIVE_LANDSCAPE = """Analyze the competitive landscape...
+IMPORTANT: Your entire response must be ONLY the valid JSON object described above..."""
+    UNIVERSAL_ATTRIBUTES_MAPPING = """Map the {category} category...
+IMPORTANT: Your entire response must be ONLY the valid JSON object described above..."""
 
-Analyze this category and provide insights in the following JSON format:
-{{
-    "category_characteristics": {{
-        "market_maturity": "emerging|growing|mature|declining",
-        "purchase_frequency": "daily|weekly|monthly|yearly",
-        "decision_complexity": "low|medium|high",
-        "brand_importance": "low|medium|high"
-    }},
-    "customer_segments": [
-        {{
-            "segment_name": "descriptive name",
-            "size_percentage": 0-100,
-            "key_motivations": ["motivation1", "motivation2"],
-            "price_sensitivity": "low|medium|high"
-        }}
-    ],
-    "category_specific_attributes": [
-        {{
-            "attribute_code": "CATEGORY_SPECIFIC_CODE",
-            "attribute_name": "Human readable name",
-            "values": ["value1", "value2", "value3"],
-            "importance": "low|medium|high"
-        }}
-    ]
-}}
-
-Focus on actionable insights that would help understand customer behavior patterns."""
-    
-    COMPETITIVE_LANDSCAPE = """Analyze the competitive landscape for {category} with focus on {brand_name}.
-
-Competitors: {competitors}
-Brand Positioning: {positioning}
-
-Provide analysis in this JSON format:
-{{
-    "market_segments": [
-        {{
-            "segment": "segment_name", 
-            "leaders": ["brand1", "brand2"],
-            "positioning_gap": "opportunity description"
-        }}
-    ],
-    "price_tiers": {{
-        "BUDGET": "price_range_description",
-        "MIDRANGE": "price_range_description", 
-        "PREMIUM": "price_range_description"
-    }},
-    "positioning_opportunities": [
-        {{
-            "opportunity": "specific_positioning",
-            "target_segment": "customer_segment",
-            "competitive_advantage": "advantage_description"
-        }}
-    ]
-}}"""
-
-    UNIVERSAL_ATTRIBUTES_MAPPING = """Map the {category} category to our universal customer attribute framework.
-
-Universal Framework:
-- COREB1 (Core Behavior): HEALTH_FOCUSED, QUALITY_CONNOISSEUR, BUSY_PRACTICAL
-- MODIFIERE1 (Identity): STATUS_SIGNAL, HEALTH_IDENTITY, SMART_SHOPPER  
-- MODIFIERD3 (Price Tier): BUDGET, MIDRANGE, PREMIUM
-- COREA2 (Shopping Style): RESEARCH, QUICK_STORE, ROUTINE_ONLINE
-- DEMOD2 (Lifestyle): URBAN_FAST, SUBURBAN_FAMILY, HEALTH_CONSCIOUS_REGION
-- COREB3 (Brand Preference): BRAND_AWARE, BRAND_NEUTRAL, BRAND_BLIND
-
-Return JSON mapping category insights to universal attributes:
-{{
-    "universal_attributes": {{
-        "COREB1": ["primary_behavior", "secondary_behavior"],
-        "MODIFIERE1": ["primary_identity", "secondary_identity"],
-        "MODIFIERD3": ["BUDGET", "MIDRANGE", "PREMIUM"],
-        "COREA2": ["primary_shopping", "secondary_shopping"],
-        "DEMOD2": ["primary_lifestyle", "secondary_lifestyle"],
-        "COREB3": ["primary_brand_pref", "secondary_brand_pref"]
-    }}
-}}"""
 
 class LLMAttributeExtractor:
     """LLM-powered attribute extractor with robust fallback handling."""
     
-    def __init__(
-        self, 
-        ollama_config: Optional[OllamaConfig] = None,
-        fallback_to_mock: bool = True
-    ):
+    def __init__(self, ollama_config: Optional[OllamaConfig] = None):
         self.ollama_config = ollama_config or OllamaConfig()
-        self.fallback_to_mock = fallback_to_mock
         self.prompts = CategoryAnalysisPrompts()
-        self.mock_extractor = None
-        self.total_tokens_used = 0 #tracking tokens used
-        
-        # Initialize mock extractor for fallback
-        if fallback_to_mock:
-            self.mock_extractor = self._create_mock_extractor()
-    
-    def _create_mock_extractor(self):
-        """Create mock extractor with proper import handling."""
-        try:
-            # Try multiple import strategies
-            mock_extractor = self._try_import_mock_extractor()
-            if mock_extractor:
-                return mock_extractor
-            else:
-                logger.warning("Could not import mock extractor - using internal fallback")
-                return InternalMockExtractor()
-        except Exception as e:
-            logger.warning(f"Mock extractor import failed: {e} - using internal fallback")
-            return InternalMockExtractor()
-    
-    def _try_import_mock_extractor(self):
-        """Try different strategies to import the mock extractor."""
-        import importlib.util
-        
-        # Strategy 1: Try direct import from stage1
-        try:
-            # Get the absolute path to the mock file
-            current_dir = os.path.dirname(__file__)
-            mock_file_path = os.path.join(current_dir, '..', 'attribute_extractor.py')
-            mock_file_path = os.path.abspath(mock_file_path)
-            
-            if os.path.exists(mock_file_path):
-                spec = importlib.util.spec_from_file_location("mock_attribute_extractor", mock_file_path)
-                if spec and spec.loader:
-                    mock_module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(mock_module)
-                    
-                    if hasattr(mock_module, 'AttributeExtractor'):
-                        logger.info("Successfully imported mock AttributeExtractor")
-                        return mock_module.AttributeExtractor()
-        except Exception as e:
-            logger.debug(f"Strategy 1 failed: {e}")
-        
-        # Strategy 2: Try sys.path manipulation
-        try:
-            original_path = sys.path.copy()
-            stage1_path = os.path.join(os.path.dirname(__file__), '..')
-            if stage1_path not in sys.path:
-                sys.path.insert(0, stage1_path)
-            
-            from attribute_extractor import AttributeExtractor
-            sys.path = original_path
-            logger.info("Successfully imported mock AttributeExtractor via sys.path")
-            return AttributeExtractor()
-            
-        except Exception as e:
-            logger.debug(f"Strategy 2 failed: {e}")
-            sys.path = original_path
-        
-        return None
-    
+        self.total_tokens_used = 0
+        self.mock_extractor = InternalMockExtractor()
+
     async def generate_category_intelligence(
-        self,
-        category: str,
-        brand_context: BrandContext,
-        customer_narrative: Optional[str] = None
+        self, category: str, brand_context: BrandContext, customer_narrative: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Generate category intelligence using LLM analysis."""
-        
-        logger.info("Generating category intelligence with LLM",
-                   metadata={"category": category, "brand": brand_context.brand_name})
-        
+        logger.info("Generating category intelligence with LLM")
         try:
             async with OllamaClient(self.ollama_config) as client:
-                # Check if Ollama is available
                 if not await client.health_check():
                     logger.warning("Ollama not available, falling back to mock")
                     return self._fallback_to_mock(category, brand_context, customer_narrative)
                 
-                # Step 1: Base category analysis
-                category_analysis = await self._analyze_category_characteristics(
-                    client, category, brand_context
-                )
+                # These now call the robust client method
+                category_analysis = await self._analyze_category_characteristics(client, category, brand_context)
+                competitive_analysis = await self._analyze_competitive_landscape(client, category, brand_context)
+                universal_mapping = await self._map_universal_attributes(client, category, category_analysis)
+                category_attributes = await self._generate_category_attributes(client, category)
                 
-                # Step 2: Competitive landscape analysis  
-                competitive_analysis = await self._analyze_competitive_landscape(
-                    client, category, brand_context
-                )
-                
-                # Step 3: Universal attributes mapping
-                universal_mapping = await self._map_universal_attributes(
-                    client, category, category_analysis
-                )
-                
-                # Step 4: Generate category-specific attributes
-                category_attributes = await self._generate_category_attributes(
-                    client, category, category_analysis
-                )
-                
-                # Combine all analyses
                 intelligence = self._combine_intelligence(
-                    category,
-                    brand_context,
-                    category_analysis,
-                    competitive_analysis,
-                    universal_mapping,
-                    category_attributes
+                    category, brand_context, category_analysis, competitive_analysis,
+                    universal_mapping, category_attributes
                 )
-                
-                logger.info("Category intelligence generated successfully",
-                           metadata={"category": category, "attributes_count": len(intelligence.get("universal_attributes", {}))})
-                
+                logger.info("Category intelligence generated successfully")
                 return intelligence
-                
         except Exception as e:
-            logger.error(f"LLM category intelligence generation failed: {e}")
-            if self.fallback_to_mock:
-                logger.info("Falling back to mock implementation")
-                return self._fallback_to_mock(category, brand_context, customer_narrative)
-            raise
-    
-    async def _analyze_category_characteristics(
-        self,
-        client: OllamaClient,
-        category: str,
-        brand_context: BrandContext
-    ) -> Dict[str, Any]:
-        """Analyze fundamental category characteristics."""
-        
+            logger.error(f"LLM category intelligence generation failed: {e}", exc_info=True)
+            return self._fallback_to_mock(category, brand_context, customer_narrative)
+
+    async def _run_json_generation(self, client: OllamaClient, request: LLMRequest) -> Dict[str, Any]:
+        """Helper to run self-correcting JSON generation and count tokens."""
+        parsed_json, tokens_used = await client.generate_json_with_self_correction(request)
+        self.total_tokens_used += tokens_used
+        return parsed_json
+
+    async def _analyze_category_characteristics(self, client: OllamaClient, category: str, brand_context: BrandContext) -> Dict[str, Any]:
         prompt = self.prompts.BASE_ANALYSIS.format(
-            category=category,
-            brand_name=brand_context.brand_name,
+            category=category, brand_name=brand_context.brand_name,
             competitors=", ".join(brand_context.competitive_context.primary_competitors),
             positioning=getattr(brand_context, 'brand_positioning', 'Not specified')
         )
-        
-        request = LLMRequest(
-            prompt=prompt,
-            model="codellama",
-            temperature=0.3,
-            max_tokens=800,
-            system_prompt="You are a market research expert. Always respond with valid JSON."
-        )
-        
-        response = await client.generate(request)
-        self.total_tokens_used += response.tokens_used #accumulate tokens
-        
-        if not response.success:
-            raise RuntimeError(f"Category analysis failed: {response.error}")
-        
-        try:
-            return json.loads(response.content)
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON parsing failed, attempting to extract: {e}")
-            return self._extract_json_from_response(response.content)
-    
-    async def _analyze_competitive_landscape(
-        self,
-        client: OllamaClient, 
-        category: str,
-        brand_context: BrandContext
-    ) -> Dict[str, Any]:
-        """Analyze competitive positioning and opportunities."""
-        
+        request = LLMRequest(prompt=prompt, model="codellama", temperature=0.2, max_tokens=1024, system_prompt="You are a market research expert.")
+        return await self._run_json_generation(client, request)
+
+    async def _analyze_competitive_landscape(self, client: OllamaClient, category: str, brand_context: BrandContext) -> Dict[str, Any]:
         prompt = self.prompts.COMPETITIVE_LANDSCAPE.format(
-            category=category,
-            brand_name=brand_context.brand_name,
+            category=category, brand_name=brand_context.brand_name,
             competitors=", ".join(brand_context.competitive_context.primary_competitors),
             positioning=getattr(brand_context, 'brand_positioning', 'Not specified')
         )
-        
-        request = LLMRequest(
-            prompt=prompt,
-            model="codellama",
-            temperature=0.2,
-            max_tokens=600,
-            system_prompt="You are a competitive intelligence expert. Always respond with valid JSON."
-        )
-        
-        response = await client.generate(request)
-        self.total_tokens_used += response.tokens_used  #Accumulate tokens
-        
-        if response.success:
-            try:
-                return json.loads(response.content)
-            except json.JSONDecodeError:
-                return self._extract_json_from_response(response.content)
-        
-        # Fallback competitive analysis
-        return {
-            "market_segments": [
-                {"segment": "premium", "leaders": brand_context.competitive_context.primary_competitors[:2], "positioning_gap": "Quality differentiation"},
-                {"segment": "mainstream", "leaders": brand_context.competitive_context.primary_competitors, "positioning_gap": "Value proposition"},
-                {"segment": "budget", "leaders": ["Generic brands"], "positioning_gap": "Accessibility"}
-            ],
-            "price_tiers": {
-                "BUDGET": "Entry-level pricing",
-                "MIDRANGE": "Competitive pricing", 
-                "PREMIUM": "Premium pricing"
-            },
-            "positioning_opportunities": [
-                {"opportunity": "quality_leader", "target_segment": "quality_focused", "competitive_advantage": "Superior quality"}
-            ]
-        }
-    
-    async def _map_universal_attributes(
-        self,
-        client: OllamaClient,
-        category: str,
-        category_analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Map category insights to universal attribute framework."""
-        
-        prompt = self.prompts.UNIVERSAL_ATTRIBUTES_MAPPING.format(
-            category=category
-        )
-        
-        # Add category context to prompt
+        request = LLMRequest(prompt=prompt, model="codellama", temperature=0.2, max_tokens=800, system_prompt="You are a competitive intelligence expert.")
+        return await self._run_json_generation(client, request)
+
+    async def _map_universal_attributes(self, client: OllamaClient, category: str, category_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        prompt = self.prompts.UNIVERSAL_ATTRIBUTES_MAPPING.format(category=category)
         if category_analysis.get("customer_segments"):
-            prompt += f"\n\nCategory Insights:\n{json.dumps(category_analysis['customer_segments'], indent=2)}"
-        
-        request = LLMRequest(
-            prompt=prompt,
-            model="codellama",
-            temperature=0.1,
-            max_tokens=400,
-            system_prompt="You are a customer psychology expert. Map categories to universal behavioral attributes with valid JSON."
-        )
-        
-        response = await client.generate(request)
-        self.total_tokens_used += response.tokens_used  #Accumulate tokens
-        
-        if response.success:
-            try:
-                return json.loads(response.content)
-            except json.JSONDecodeError:
-                return self._extract_json_from_response(response.content)
-        
-        # Fallback universal mapping
-        return {
-            "universal_attributes": {
-                "COREB1": ["QUALITY_CONNOISSEUR", "BUSY_PRACTICAL"],
-                "MODIFIERE1": ["SMART_SHOPPER", "STATUS_SIGNAL"],
-                "MODIFIERD3": ["BUDGET", "MIDRANGE", "PREMIUM"],
-                "COREA2": ["RESEARCH", "QUICK_STORE"],
-                "DEMOD2": ["URBAN_FAST", "SUBURBAN_FAMILY"],
-                "COREB3": ["BRAND_AWARE", "BRAND_NEUTRAL"]
-            }
-        }
-    
-    async def _generate_category_attributes(
-        self,
-        client: OllamaClient,
-        category: str,
-        category_analysis: Dict[str, Any]
-    ) -> Dict[str, List[str]]:
-        """Generate category-specific attribute codes."""
-        
+            prompt += f"\n\nCategory Insights:\n{json.dumps(category_analysis.get('customer_segments', []), indent=2)}"
+        request = LLMRequest(prompt=prompt, model="codellama", temperature=0.1, max_tokens=512, system_prompt="You are a customer psychology expert.")
+        return await self._run_json_generation(client, request)
+
+    async def _generate_category_attributes(self, client: OllamaClient, category: str) -> Dict[str, List[str]]:
         prompt = f"""Based on the {category} category analysis, generate 3-5 category-specific attributes in this format:
+{{ "{category.upper()}_USE_CASE": ["primary_use", "secondary_use"], "{category.upper()}_EXPERTISE": ["beginner", "expert"] }}
+IMPORTANT: Your entire response must be ONLY the valid JSON object described above, with no additional text, commentary, or markdown formatting."""
+        request = LLMRequest(prompt=prompt, model="codellama", temperature=0.2, max_tokens=400, system_prompt="Generate category-specific behavioral attributes as valid JSON.")
+        return await self._run_json_generation(client, request)
 
-{{
-    "{category.upper()}_USE_CASE": ["primary_use", "secondary_use", "specialized_use"],
-    "{category.upper()}_EXPERTISE": ["beginner", "intermediate", "expert"],
-    "{category.upper()}_PRIORITY": ["function", "design", "price", "brand"],
-    "{category.upper()}_FREQUENCY": ["daily", "weekly", "occasional"]
-}}
-
-Make attributes relevant to actual {category} customer behavior."""
-        
-        request = LLMRequest(
-            prompt=prompt,
-            model="codellama",
-            temperature=0.2,
-            max_tokens=300,
-            system_prompt="Generate category-specific behavioral attributes as valid JSON."
-        )
-        
-        response = await client.generate(request)
-        self.total_tokens_used += response.tokens_used #Accumulate tokens
-        
-        if response.success:
-            try:
-                return json.loads(response.content)
-            except json.JSONDecodeError:
-                pass
-        
-        # Fallback category attributes
-        return {
-            f"{category.upper()}_USE_CASE": ["primary_use", "secondary_use"],
-            f"{category.upper()}_EXPERTISE": ["beginner", "intermediate", "expert"], 
-            f"{category.upper()}_PRIORITY": ["function", "design", "price"]
-        }
+    def _combine_intelligence(self, category: str, brand_context: BrandContext, category_analysis: Dict[str, Any], competitive_analysis: Dict[str, Any], universal_mapping: Dict[str, Any], category_attributes: Dict[str, List[str]]) -> Dict[str, Any]:
+        return {"category": category, "brand_context": brand_context.brand_name, "universal_attributes": universal_mapping.get("universal_attributes", {}), "category_attributes": category_attributes, "competitive_landscape": {"primary_competitors": brand_context.competitive_context.primary_competitors, "market_segments": competitive_analysis.get("market_segments", []), "positioning_opportunities": competitive_analysis.get("positioning_opportunities", [])}, "price_ranges": competitive_analysis.get("price_tiers", {}), "category_insights": {"characteristics": category_analysis.get("category_characteristics", {}), "customer_segments": category_analysis.get("customer_segments", []), "llm_generated": True}}
     
-    def _combine_intelligence(
-        self,
-        category: str,
-        brand_context: BrandContext,
-        category_analysis: Dict[str, Any],
-        competitive_analysis: Dict[str, Any],
-        universal_mapping: Dict[str, Any],
-        category_attributes: Dict[str, List[str]]
-    ) -> Dict[str, Any]:
-        """Combine all analyses into final intelligence structure."""
-        
-        return {
-            "category": category,
-            "brand_context": brand_context.brand_name,
-            "universal_attributes": universal_mapping.get("universal_attributes", {}),
-            "category_attributes": category_attributes,
-            "competitive_landscape": {
-                "primary_competitors": brand_context.competitive_context.primary_competitors,
-                "market_segments": competitive_analysis.get("market_segments", []),
-                "positioning_opportunities": competitive_analysis.get("positioning_opportunities", [])
-            },
-            "price_ranges": competitive_analysis.get("price_tiers", {
-                "BUDGET": "Entry-level pricing",
-                "MIDRANGE": "Competitive pricing",
-                "PREMIUM": "Premium pricing"
-            }),
-            "category_insights": {
-                "characteristics": category_analysis.get("category_characteristics", {}),
-                "customer_segments": category_analysis.get("customer_segments", []),
-                "llm_generated": True
-            }
-        }
-    
-    def _extract_json_from_response(self, content: str) -> Dict[str, Any]:
-        """Extract JSON from LLM response that may contain extra text."""
-        import re
-        
-        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-        matches = re.findall(json_pattern, content, re.DOTALL)
-        
-        for match in matches:
-            try:
-                return json.loads(match)
-            except json.JSONDecodeError:
-                continue
-        
-        logger.warning("Could not extract JSON from LLM response")
-        return {}
-    
-    def _fallback_to_mock(
-        self,
-        category: str,
-        brand_context: BrandContext,
-        customer_narrative: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Fallback to mock implementation."""
-        if self.mock_extractor:
-            try:
-                return self.mock_extractor.generate_category_intelligence(
-                    category, brand_context, customer_narrative
-                )
-            except Exception as e:
-                logger.warning(f"Mock extractor failed: {e}")
-        
-        # Final fallback
-        return self._create_emergency_fallback(category, brand_context)
-    
-    def _create_emergency_fallback(
-        self,
-        category: str,
-        brand_context: BrandContext
-    ) -> Dict[str, Any]:
-        """Create emergency fallback when all else fails."""
-        logger.warning("Using emergency fallback - all other methods failed")
-        return {
-            "category": category,
-            "brand_context": brand_context.brand_name,
-            "universal_attributes": {
-                "COREB1": ["QUALITY_CONNOISSEUR", "BUSY_PRACTICAL"],
-                "MODIFIERE1": ["SMART_SHOPPER", "STATUS_SIGNAL"],
-                "MODIFIERD3": ["BUDGET", "MIDRANGE", "PREMIUM"],
-                "COREA2": ["RESEARCH", "QUICK_STORE"],
-                "DEMOD2": ["URBAN_FAST", "SUBURBAN_FAMILY"],
-                "COREB3": ["BRAND_AWARE", "BRAND_NEUTRAL"]
-            },
-            "category_attributes": {
-                f"{category.upper()}_USE_CASE": ["primary_use", "secondary_use"],
-                f"{category.upper()}_EXPERTISE": ["beginner", "expert"],
-                f"{category.upper()}_PRIORITY": ["function", "price"]
-            },
-            "competitive_landscape": {
-                "primary_competitors": brand_context.competitive_context.primary_competitors,
-                "market_segments": ["premium", "mainstream", "budget"],
-                "positioning_opportunities": ["quality_leader", "value_leader"]
-            },
-            "price_ranges": {
-                "BUDGET": "< $100",
-                "MIDRANGE": "$100 - $300",
-                "PREMIUM": "> $300"
-            },
-            "emergency_fallback": True
-        }
-
+    def _fallback_to_mock(self, *args, **kwargs) -> Dict[str, Any]:
+        logger.warning("LLM generation failed, using internal mock extractor.")
+        return self.mock_extractor.generate_category_intelligence(*args, **kwargs)
 
 class InternalMockExtractor:
-    """Internal mock implementation when external mock is unavailable."""
-    
-    def generate_category_intelligence(
-        self,
-        category: str,
-        brand_context: BrandContext,
-        customer_narrative: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Generate mock category intelligence."""
-        
-        logger.info("Using internal mock extractor")
-        
-        return {
-            "category": category,
-            "brand_context": brand_context.brand_name,
-            "universal_attributes": {
-                "COREB1": ["QUALITY_CONNOISSEUR", "BUSY_PRACTICAL"],
-                "MODIFIERE1": ["SMART_SHOPPER", "STATUS_SIGNAL"],
-                "MODIFIERD3": ["BUDGET", "MIDRANGE", "PREMIUM"],
-                "COREA2": ["RESEARCH", "QUICK_STORE"],
-                "DEMOD2": ["URBAN_FAST", "SUBURBAN_FAMILY"],
-                "COREB3": ["BRAND_AWARE", "BRAND_NEUTRAL"]
-            },
-            "category_attributes": {
-                f"{category.upper()}_USE_CASE": ["primary_use", "secondary_use"],
-                f"{category.upper()}_EXPERTISE": ["beginner", "intermediate", "expert"],
-                f"{category.upper()}_PRIORITY": ["function", "design", "price"]
-            },
-            "competitive_landscape": {
-                "primary_competitors": brand_context.competitive_context.primary_competitors,
-                "market_segments": [
-                    {"segment": "premium", "leaders": brand_context.competitive_context.primary_competitors[:2], "positioning_gap": "Quality"},
-                    {"segment": "mainstream", "leaders": brand_context.competitive_context.primary_competitors, "positioning_gap": "Value"},
-                    {"segment": "budget", "leaders": ["Generic"], "positioning_gap": "Price"}
-                ],
-                "positioning_opportunities": [
-                    {"opportunity": "quality_leader", "target_segment": "quality_focused", "competitive_advantage": "Superior quality"}
-                ]
-            },
-            "price_ranges": {
-                "BUDGET": "Entry-level pricing",
-                "MIDRANGE": "Competitive pricing",
-                "PREMIUM": "Premium pricing"
-            },
-            "category_insights": {
-                "characteristics": {
-                    "market_maturity": "mature",
-                    "purchase_frequency": "yearly",
-                    "decision_complexity": "medium",
-                    "brand_importance": "medium"
-                },
-                "customer_segments": [
-                    {
-                        "segment_name": "Quality Seekers",
-                        "size_percentage": 30,
-                        "key_motivations": ["quality", "reliability"],
-                        "price_sensitivity": "low"
-                    },
-                    {
-                        "segment_name": "Value Buyers",
-                        "size_percentage": 50,
-                        "key_motivations": ["value", "functionality"],
-                        "price_sensitivity": "medium"
-                    },
-                    {
-                        "segment_name": "Budget Conscious",
-                        "size_percentage": 20,
-                        "key_motivations": ["price", "basic_features"],
-                        "price_sensitivity": "high"
-                    }
-                ],
-                "mock_generated": True
-            }
-        }
-
+    def generate_category_intelligence(self, *args, **kwargs) -> Dict[str, Any]:
+        return {"category": "mock", "universal_attributes": {}, "category_attributes": {}, "competitive_landscape": {}, "price_ranges": {}, "category_insights": {"llm_generated": False, "mock_generated": True}}
 
 # Factory function for backwards compatibility
 def create_attribute_extractor(

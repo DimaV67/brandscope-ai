@@ -48,7 +48,7 @@ class Stage1Generator:
             operation="stage1_generation"
         )
     
-    def execute_full_pipeline(self) -> Dict[str, Any]:
+    async def execute_full_pipeline(self) -> Dict[str, Any]:
         """
         Execute complete Stage 1 pipeline.
         
@@ -69,7 +69,7 @@ class Stage1Generator:
             
             # Step 2: Generate category intelligence
             logger.info("Generating category intelligence")
-            category_intelligence = self.attribute_extractor.generate_category_intelligence(
+            category_intelligence = await self.attribute_extractor.generate_category_intelligence(
                 category=inputs['category'],
                 brand_context=inputs['brand_context'],
                 customer_narrative=inputs.get('customer_narrative')
@@ -77,14 +77,14 @@ class Stage1Generator:
             
             # Step 3: Generate customer archetypes
             logger.info("Building customer archetypes")
-            archetypes = self.archetype_builder.generate_archetypes(
+            archetypes = await self.archetype_builder.generate_archetypes(
                 category_intelligence=category_intelligence,
                 brand_context=inputs['brand_context']
             )
             
             # Step 4: Generate and style queries
             logger.info("Generating styled queries")
-            query_results = self.query_generator.generate_query_package(
+            query_results = await self.query_generator.generate_query_package(
                 top_archetypes=archetypes['top_archetypes'],
                 category_intelligence=category_intelligence,
                 brand_context=inputs['brand_context']

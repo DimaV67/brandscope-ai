@@ -2,21 +2,23 @@
 import httpx
 import asyncio
 import json
+import re
 import logging
-from typing import Dict, List, Optional, AsyncGenerator, Union
+from typing import Dict, List, Optional, AsyncGenerator, Union, Tuple
 from dataclasses import dataclass, asdict
 from tenacity import retry, stop_after_attempt, wait_exponential
 from enum import Enum
 import time
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
 class ModelType(Enum):
     """Available Ollama model types for different tasks"""
-    GENERAL = "llama3.2"  # General purpose reasoning
-    CREATIVE = "mistral"  # Creative content generation
-    ANALYSIS = "codellama"  # Analytical tasks
-    FAST = "phi3"  # Quick responses
+    GENERAL = "llama3.2"
+    CREATIVE = "mistral"
+    ANALYSIS = "codellama"
+    FAST = "phi3"
 
 @dataclass
 class OllamaConfig:
@@ -57,13 +59,8 @@ class LLMRequest:
                 "repeat_penalty": self.repeat_penalty
             }
         }
-        
-        if self.max_tokens:
-            payload["options"]["num_predict"] = self.max_tokens
-            
-        if self.system_prompt:
-            payload["system"] = self.system_prompt
-            
+        if self.max_tokens: payload["options"]["num_predict"] = self.max_tokens
+        if self.system_prompt: payload["system"] = self.system_prompt
         return payload
 
 @dataclass
@@ -91,23 +88,70 @@ class OllamaClient:
     
     def __init__(self, config: Optional[OllamaConfig] = None):
         self.config = config or OllamaConfig()
-        self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.config.timeout),
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
-        )
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(self.config.timeout))
         self._available_models: Optional[List[str]] = None
-        self._last_health_check: Optional[float] = None
         
     async def __aenter__(self):
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
+        await self.client.aclose()
+
+    def _extract_json_from_response(self, content: str) -> Dict[str, Any]:
+        """Extracts a JSON object from a string, handling markdown code fences."""
+        match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+            try: return json.loads(json_str)
+            except json.JSONDecodeError: pass
+        try:
+            start = content.find('{')
+            end = content.rfind('}') + 1
+            if start != -1 and end != 0: return json.loads(content[start:end])
+        except json.JSONDecodeError as e: raise e # Re-raise to be caught by self-correction loop
+        logger.warning("Could not extract any JSON-like object from response.")
+        raise json.JSONDecodeError("No JSON object found", content, 0)
+
+    # ADDED: New self-correcting method for generating JSON
+    async def generate_json_with_self_correction(
+        self, request: LLMRequest, retries: int = 1
+    ) -> Tuple[Dict[str, Any], int]:
+        """Generates a JSON response, with a self-correction retry loop."""
+        total_tokens = 0
+        try:
+            response = await self.generate(request)
+            total_tokens += response.tokens_used
+            if not response.success:
+                logger.error(f"Initial LLM request failed: {response.error}")
+                return {}, total_tokens
+
+            parsed_json = self._extract_json_from_response(response.content)
+            return parsed_json, total_tokens
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON on first attempt: {e}. Retrying with self-correction.")
+            if retries > 0:
+                correction_prompt = (
+                    f"The following response resulted in a JSON parsing error.\n"
+                    f"ERROR: {e}\n"
+                    f"FAULTY TEXT: ```\n{response.content}\n```\n\n"
+                    f"Please correct the JSON syntax and provide ONLY the valid JSON object, with no other text."
+                )
+                request.prompt = correction_prompt
+                # Use a more capable model for correction
+                request.model = ModelType.GENERAL.value 
+                
+                # Recursive call with one less retry
+                corrected_json, correction_tokens = await self.generate_json_with_self_correction(
+                    request, retries - 1
+                )
+                total_tokens += correction_tokens
+                return corrected_json, total_tokens
+            else:
+                logger.error("JSON self-correction failed after multiple retries.")
+                return {}, total_tokens
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+
     async def generate(self, request: LLMRequest) -> LLMResponse:
         """Generate completion with automatic retry logic"""
         start_time = time.time()

@@ -1,11 +1,13 @@
 """
 Stage 1 command implementation.
 """
+import asyncio
 import click
 from ..core.project_manager import BrandAuditProject
 from ..stage1.prompt_generator import Stage1Generator
 from ..utils.logging import get_logger
 from ..utils.exceptions import StageExecutionError
+
 
 logger = get_logger(__name__)
 
@@ -24,19 +26,9 @@ def execute_stage1(project: BrandAuditProject = None) -> None:
         # Create generator
         generator = Stage1Generator(project)
         
-        # Execute pipeline
-        with click.progressbar(
-            length=100, 
-            label="Generating prompts",
-            show_percent=True
-        ) as bar:
-            bar.update(20)  # Category intelligence
-            bar.update(40)  # Archetypes
-            bar.update(70)  # Queries  
-            bar.update(90)  # Assembly
-            
-            result = generator.execute_full_pipeline()
-            bar.update(100)  # Complete
+        # The logger will now print live updates from the pipeline.
+        click.echo("🚀 Generating prompts... (This may take several minutes)")
+        result = asyncio.run(generator.execute_full_pipeline())
         
         # Show results
         click.echo(f"\n✅ Stage 1 completed successfully!")

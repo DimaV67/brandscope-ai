@@ -161,21 +161,29 @@ class LoggingManager:
         
         # Configure root logger
         root_logger = logging.getLogger()
-        root_logger.setLevel(getattr(logging, self.config.log_level))
+        root_logger.setLevel(logging.DEBUG)  # Set root to lowest level to capture all messages
         
         # Clear existing handlers
         root_logger.handlers.clear()
         
-        # Console handler for development
+        # --- CONSOLE HANDLER (CORRECTED LOGIC) ---
+        # This handler is now always active to provide user feedback.
+        console_handler = logging.StreamHandler(sys.stdout)
         if self.config.debug:
-            console_handler = logging.StreamHandler(sys.stdout)
+            # In debug mode, show verbose logs
             console_handler.setLevel(logging.DEBUG)
             console_formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
-            console_handler.setFormatter(console_formatter)
-            root_logger.addHandler(console_handler)
+        else:
+            # In normal mode, only show INFO and higher for clean progress updates
+            console_handler.setLevel(logging.INFO)
+            console_formatter = logging.Formatter('%(message)s')
+
+        console_handler.setFormatter(console_formatter)
+        root_logger.addHandler(console_handler)
         
+        # --- FILE HANDLERS (Unchanged) ---
         # File handler for structured logging
         log_file = self.config.logs_root / "application.log"
         file_handler = logging.handlers.RotatingFileHandler(
