@@ -45,6 +45,7 @@ class LLMRequest:
     repeat_penalty: float = 1.1
     system_prompt: Optional[str] = None
     stream: bool = False
+
     
     def to_ollama_format(self, default_model: str) -> Dict:
         """Convert to Ollama API format"""
@@ -90,6 +91,7 @@ class OllamaClient:
         self.config = config or OllamaConfig()
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(self.config.timeout))
         self._available_models: Optional[List[str]] = None
+        self._last_health_check: bool = False
         
     async def __aenter__(self):
         return self
@@ -284,29 +286,23 @@ class OllamaClient:
             return None
     
     async def health_check(self) -> bool:
-        """Check if Ollama is responsive with caching"""
+        """Check if Ollama is responsive with caching."""
         current_time = time.time()
         
-        # Cache health check for 30 seconds
-        if (self._last_health_check and 
-            current_time - self._last_health_check < 30):
+        # Use the cached result if it's recent
+        if self._last_health_check and (current_time - self._last_health_check < 30):
             return True
         
         try:
-            response = await self.client.get(
-                f"{self.config.base_url}/api/tags",
-                timeout=10.0
-            )
-            
-            is_healthy = response.status_code == 200
-            if is_healthy:
+            # More lightweight health check
+            response = await self.client.get(f"{self.config.base_url}/", timeout=5.0)
+            if response.status_code == 200:
                 self._last_health_check = current_time
-            
-            return is_healthy
-            
+                return True
+            return False
         except Exception:
             return False
-    
+        
     async def pull_model(self, model_name: str) -> bool:
         """Pull a model if not available"""
         try:
