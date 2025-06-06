@@ -109,6 +109,20 @@ class Stage1Generator:
             
             # Step 7: Generate execution guide
             self._generate_execution_guide(execution_package)
+
+            # Aggregate and log total token usage
+            total_tokens = (
+                self.attribute_extractor.total_tokens_used +
+                self.archetype_builder.total_tokens_used +
+                self.query_generator.total_tokens_used
+            )
+            logger.info(
+                "Stage 1 pipeline completed successfully",
+                metadata={
+                    "artifacts_count": len(artifacts),
+                    "total_tokens_used": total_tokens
+                }
+            )
             
             # Update project status
             self.project.update_stage_status(
@@ -120,11 +134,13 @@ class Stage1Generator:
             logger.info("Stage 1 pipeline completed successfully",
                        metadata={"artifacts_count": len(artifacts)})
             
+            #Added token count to the final output
             return {
                 'status': 'success',
                 'artifacts': artifacts,
                 'execution_package': execution_package,
-                'next_steps': 'stage2_manual_execution'
+                'next_steps': 'stage2_manual_execution',
+                'total_tokens_used': total_tokens
             }
             
         except Exception as e:

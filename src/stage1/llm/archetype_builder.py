@@ -135,6 +135,7 @@ class LLMArchetypeBuilder:
         self.fallback_to_mock = fallback_to_mock
         self.prompts = ArchetypePrompts()
         self.mock_builder = None
+        self.total_tokens_used =0 #Tokens counter
         
         # Initialize mock builder for fallback
         if fallback_to_mock:
@@ -277,6 +278,7 @@ class LLMArchetypeBuilder:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used #Accumulate tokens
         
         if not response.success:
             raise RuntimeError(f"Archetype generation failed: {response.error}")
@@ -311,6 +313,7 @@ class LLMArchetypeBuilder:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used #Accumulate tokens
         
         if response.success:
             try:
@@ -346,6 +349,7 @@ class LLMArchetypeBuilder:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used #Accumulate tokens
         
         if response.success:
             try:

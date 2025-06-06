@@ -119,6 +119,7 @@ class LLMAttributeExtractor:
         self.fallback_to_mock = fallback_to_mock
         self.prompts = CategoryAnalysisPrompts()
         self.mock_extractor = None
+        self.total_tokens_used = 0 #tracking tokens used
         
         # Initialize mock extractor for fallback
         if fallback_to_mock:
@@ -263,6 +264,7 @@ class LLMAttributeExtractor:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used #accumulate tokens
         
         if not response.success:
             raise RuntimeError(f"Category analysis failed: {response.error}")
@@ -297,6 +299,7 @@ class LLMAttributeExtractor:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used  #Accumulate tokens
         
         if response.success:
             try:
@@ -346,6 +349,7 @@ class LLMAttributeExtractor:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used  #Accumulate tokens
         
         if response.success:
             try:
@@ -393,6 +397,7 @@ Make attributes relevant to actual {category} customer behavior."""
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used #Accumulate tokens
         
         if response.success:
             try:

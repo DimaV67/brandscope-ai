@@ -122,6 +122,7 @@ class LLMQueryGenerator:
         self.fallback_to_mock = fallback_to_mock
         self.prompts = QueryGenerationPrompts()
         self.mock_generator = None
+        self.total_tokens_used =0 # Token counter
         
         # Initialize mock generator for fallback
         if fallback_to_mock:
@@ -275,6 +276,7 @@ class LLMQueryGenerator:
             )
             
             response = await client.generate(request)
+            self.total_tokens_used += response.tokens_used  #Accumulate tokens
             
             if response.success:
                 try:
@@ -332,6 +334,7 @@ class LLMQueryGenerator:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used #Accumulate tokens
         
         all_queries = []
         
@@ -427,6 +430,7 @@ class LLMQueryGenerator:
         )
         
         response = await client.generate(request)
+        self.total_tokens_used += response.tokens_used #Accumulate tokens
         
         if response.success:
             try:
