@@ -1,6 +1,6 @@
 # src/stage1/llm/query_generator.py
 """
-LLM-powered query generator replacing mock implementation.
+LLM-powered query generator with fixed import handling.
 """
 import json
 import asyncio
@@ -111,7 +111,7 @@ Return refined queries in JSON format:
 }}"""
 
 class LLMQueryGenerator:
-    """LLM-powered query generator with authentic customer language."""
+    """LLM-powered query generator with robust fallback handling."""
     
     def __init__(
         self,
@@ -121,14 +121,64 @@ class LLMQueryGenerator:
         self.ollama_config = ollama_config or OllamaConfig()
         self.fallback_to_mock = fallback_to_mock
         self.prompts = QueryGenerationPrompts()
+        self.mock_generator = None
         
-        # Load mock generator for fallback
+        # Initialize mock generator for fallback
         if fallback_to_mock:
-            import sys
-            import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-            from query_generator import QueryGenerator as MockGenerator
-            self.mock_generator = MockGenerator()
+            self.mock_generator = self._create_mock_generator()
+    
+    def _create_mock_generator(self):
+        """Create mock generator with proper import handling."""
+        try:
+            mock_generator = self._try_import_mock_generator()
+            if mock_generator:
+                return mock_generator
+            else:
+                logger.warning("Could not import mock generator - using internal fallback")
+                return InternalMockGenerator()
+        except Exception as e:
+            logger.warning(f"Mock generator import failed: {e} - using internal fallback")
+            return InternalMockGenerator()
+    
+    def _try_import_mock_generator(self):
+        """Try different strategies to import the mock generator."""
+        import importlib.util
+        
+        # Strategy 1: Try direct import from stage1
+        try:
+            current_dir = os.path.dirname(__file__)
+            mock_file_path = os.path.join(current_dir, '..', 'query_generator.py')
+            mock_file_path = os.path.abspath(mock_file_path)
+            
+            if os.path.exists(mock_file_path):
+                spec = importlib.util.spec_from_file_location("mock_query_generator", mock_file_path)
+                if spec and spec.loader:
+                    mock_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mock_module)
+                    
+                    if hasattr(mock_module, 'QueryGenerator'):
+                        logger.info("Successfully imported mock QueryGenerator")
+                        return mock_module.QueryGenerator()
+        except Exception as e:
+            logger.debug(f"Strategy 1 failed: {e}")
+        
+        # Strategy 2: Try sys.path manipulation
+        try:
+            original_path = sys.path.copy()
+            stage1_path = os.path.join(os.path.dirname(__file__), '..')
+            if stage1_path not in sys.path:
+                sys.path.insert(0, stage1_path)
+            
+            from query_generator import QueryGenerator
+            sys.path = original_path
+            logger.info("Successfully imported mock QueryGenerator via sys.path")
+            return QueryGenerator()
+            
+        except Exception as e:
+            logger.debug(f"Strategy 2 failed: {e}")
+            sys.path = original_path
+        
+        return None
     
     async def generate_query_package(
         self,
@@ -200,8 +250,7 @@ class LLMQueryGenerator:
         all_queries = []
         category = category_intelligence.get("category", "product")
         
-        # Generate queries for each archetype
-        for archetype in top_archetypes[:3]:  # Limit to top 3 for efficiency
+        for archetype in top_archetypes[:3]:
             archetype_name = archetype.get("name", "Customer")
             archetype_desc = archetype.get("description", "Generic customer")
             ai_behavior = archetype.get("ai_behavior_prediction", "Seeks general information")
@@ -219,7 +268,7 @@ class LLMQueryGenerator:
             
             request = LLMRequest(
                 prompt=prompt,
-                temperature=0.7,  # Higher creativity for natural language
+                temperature=0.7,
                 max_tokens=800,
                 system_prompt="You are a customer behavior expert. Generate authentic, natural customer queries."
             )
@@ -231,7 +280,6 @@ class LLMQueryGenerator:
                     result = json.loads(response.content)
                     queries = result.get("styled_queries", [])
                     
-                    # Add archetype info to each query
                     for query in queries:
                         query["archetype"] = archetype_name
                         query["archetype_id"] = archetype.get("archetype_id", "UNKNOWN")
@@ -240,7 +288,6 @@ class LLMQueryGenerator:
                     
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse queries for archetype {archetype_name}")
-                    # Generate fallback queries for this archetype
                     all_queries.extend(self._generate_fallback_archetype_queries(
                         archetype, category, brand_context
                     ))
@@ -263,7 +310,6 @@ class LLMQueryGenerator:
         
         category = category_intelligence.get("category", "product")
         
-        # Summarize archetypes for prompt
         archetypes_summary = "\n".join([
             f"- {arch.get('name', 'Unknown')}: {arch.get('description', 'No description')[:100]}..."
             for arch in top_archetypes[:3]
@@ -294,7 +340,7 @@ class LLMQueryGenerator:
                 
                 query_id = 1
                 for category_type, queries in query_categories.items():
-                    for query_data in queries[:2]:  # Limit per category
+                    for query_data in queries[:2]:
                         all_queries.append({
                             "query_id": f"CAT{query_id:03d}",
                             "styled_query": query_data.get("query", ""),
@@ -302,7 +348,7 @@ class LLMQueryGenerator:
                             "category": category_type,
                             "archetype": query_data.get("archetype", "Multiple"),
                             "authenticity_score": query_data.get("authenticity", 7.0),
-                            "execution_priority": query_id + 100,  # Lower priority than archetype queries
+                            "execution_priority": query_id + 100,
                             "source": "category_coverage"
                         })
                         query_id += 1
@@ -321,14 +367,12 @@ class LLMQueryGenerator:
         
         all_queries = archetype_queries + category_queries
         
-        # Simple deduplication by query text similarity
         unique_queries = []
         seen_queries = set()
         
         for query in all_queries:
             query_text = query.get("styled_query", "").lower().strip()
             
-            # Simple similarity check
             is_duplicate = False
             for seen_query in seen_queries:
                 if self._calculate_similarity(query_text, seen_query) > 0.8:
@@ -350,7 +394,6 @@ class LLMQueryGenerator:
     ) -> List[Dict[str, Any]]:
         """Refine queries for maximum authenticity and effectiveness."""
         
-        # Limit refinement to top queries by authenticity
         top_queries = sorted(
             queries, 
             key=lambda q: q.get("authenticity_score", 5.0), 
@@ -386,10 +429,7 @@ class LLMQueryGenerator:
             try:
                 result = json.loads(response.content)
                 refined_queries = result.get("refined_queries", [])
-                
-                # Apply refinements back to original queries
                 return self._apply_refinements(queries, refined_queries)
-                
             except json.JSONDecodeError:
                 logger.warning("Failed to parse query refinements")
         
@@ -402,7 +442,6 @@ class LLMQueryGenerator:
     ) -> List[Dict[str, Any]]:
         """Apply refinements back to original queries."""
         
-        # Create lookup for refinements
         refinement_lookup = {
             ref.get("query_id"): ref
             for ref in refinements
@@ -415,7 +454,6 @@ class LLMQueryGenerator:
             refinement = refinement_lookup.get(query_id)
             
             if refinement and refinement.get("refined"):
-                # Apply refinement
                 refined_query = query.copy()
                 refined_query.update({
                     "styled_query": refinement["refined"],
@@ -426,7 +464,6 @@ class LLMQueryGenerator:
                 })
                 refined_queries.append(refined_query)
             else:
-                # Keep original
                 refined_queries.append(query)
         
         return refined_queries
@@ -440,7 +477,6 @@ class LLMQueryGenerator:
     ) -> Dict[str, Any]:
         """Create final structured query package."""
         
-        # Assign execution priorities
         prioritized_queries = []
         priority = 1
         
@@ -448,14 +484,12 @@ class LLMQueryGenerator:
             query_copy = query.copy()
             query_copy["execution_priority"] = priority
             
-            # Ensure required fields
             if not query_copy.get("query_id"):
                 query_copy["query_id"] = f"Q{priority:03d}"
             
             prioritized_queries.append(query_copy)
             priority += 1
         
-        # Calculate metadata
         authenticity_scores = [q.get("authenticity_score", 7.0) for q in prioritized_queries]
         avg_authenticity = sum(authenticity_scores) / len(authenticity_scores) if authenticity_scores else 7.0
         
@@ -485,7 +519,6 @@ class LLMQueryGenerator:
         archetype_name = archetype.get("name", "Customer")
         attributes = archetype.get("attributes", {})
         
-        # Generate basic queries based on archetype attributes
         queries = []
         
         if attributes.get("MODIFIERD3") == "PREMIUM":
@@ -506,7 +539,6 @@ class LLMQueryGenerator:
                 "authenticity_score": 8.0
             })
         
-        # Always add a comparison query if competitors exist
         if brand_context.competitive_context.primary_competitors:
             competitor = brand_context.competitive_context.primary_competitors[0]
             queries.append({
@@ -539,34 +571,122 @@ class LLMQueryGenerator:
         brand_context: BrandContext
     ) -> Dict[str, Any]:
         """Fallback to mock implementation."""
-        if hasattr(self, 'mock_generator'):
-            return self.mock_generator.generate_query_package(
-                top_archetypes, category_intelligence, brand_context
-            )
-        else:
-            # Emergency fallback
-            category = category_intelligence.get("category", "product")
-            
-            return {
-                "styled_queries": [
-                    {
-                        "query_id": "FALLBACK01",
-                        "styled_query": f"What's the best {category} for the money?",
-                        "original_query": f"Best {category}",
-                        "archetype": "Generic Customer",
-                        "category": "direct_recommendation",
-                        "execution_priority": 1,
-                        "authenticity_score": 7.0
-                    }
-                ],
-                "generation_metadata": {
-                    "total_queries": 1,
-                    "avg_authenticity": 7.0,
-                    "categories_covered": ["direct_recommendation"],
-                    "fallback_used": True
-                },
-                "framework_compliance": True
+        if self.mock_generator:
+            try:
+                return self.mock_generator.generate_query_package(
+                    top_archetypes, category_intelligence, brand_context
+                )
+            except Exception as e:
+                logger.warning(f"Mock generator failed: {e}")
+        
+        return self._create_emergency_fallback(category_intelligence, brand_context)
+    
+    def _create_emergency_fallback(
+        self,
+        category_intelligence: Dict[str, Any],
+        brand_context: BrandContext
+    ) -> Dict[str, Any]:
+        """Create emergency fallback when all else fails."""
+        category = category_intelligence.get("category", "product")
+        
+        return {
+            "styled_queries": [
+                {
+                    "query_id": "EMERGENCY01",
+                    "styled_query": f"What's the best {category} for the money?",
+                    "original_query": f"Best {category}",
+                    "archetype": "Generic Customer",
+                    "category": "direct_recommendation",
+                    "execution_priority": 1,
+                    "authenticity_score": 7.0
+                }
+            ],
+            "generation_metadata": {
+                "total_queries": 1,
+                "avg_authenticity": 7.0,
+                "categories_covered": ["direct_recommendation"],
+                "emergency_fallback": True
+            },
+            "framework_compliance": True
+        }
+
+
+class InternalMockGenerator:
+    """Internal mock implementation when external mock is unavailable."""
+    
+    def generate_query_package(
+        self,
+        top_archetypes: List[Dict[str, Any]],
+        category_intelligence: Dict[str, Any],
+        brand_context: BrandContext
+    ) -> Dict[str, Any]:
+        """Generate mock query package."""
+        
+        logger.info("Using internal mock generator")
+        category = category_intelligence.get("category", "product")
+        brand_name = brand_context.brand_name
+        competitors = brand_context.competitive_context.primary_competitors
+        
+        mock_queries = [
+            {
+                "query_id": "Q001",
+                "styled_query": f"What's the best {category} for someone who wants quality?",
+                "original_query": f"Best quality {category}",
+                "archetype": "Quality Seeker",
+                "category": "direct_recommendation",
+                "execution_priority": 1,
+                "authenticity_score": 8.0
+            },
+            {
+                "query_id": "Q002", 
+                "styled_query": f"I'm trying to decide between {brand_name} and {competitors[0] if competitors else 'other brands'} - any thoughts?",
+                "original_query": f"Compare {brand_name} vs competitors",
+                "archetype": "Comparison Shopper",
+                "category": "comparative_analysis",
+                "execution_priority": 2,
+                "authenticity_score": 8.5
+            },
+            {
+                "query_id": "Q003",
+                "styled_query": f"Is {brand_name} worth the extra cost for {category}?",
+                "original_query": f"Is {brand_name} worth it",
+                "archetype": "Value Conscious",
+                "category": "feature_inquiry",
+                "execution_priority": 3,
+                "authenticity_score": 7.5
+            },
+            {
+                "query_id": "Q004",
+                "styled_query": f"I need help choosing a {category} for daily use - what should I look for?",
+                "original_query": f"Help choosing {category}",
+                "archetype": "Practical User",
+                "category": "indirect_recommendation",
+                "execution_priority": 4,
+                "authenticity_score": 7.8
+            },
+            {
+                "query_id": "Q005",
+                "styled_query": f"What are the main differences between budget and premium {category}?",
+                "original_query": f"Budget vs premium {category}",
+                "archetype": "Research Oriented",
+                "category": "comparative_analysis",
+                "execution_priority": 5,
+                "authenticity_score": 8.2
             }
+        ]
+        
+        return {
+            "styled_queries": mock_queries,
+            "generation_metadata": {
+                "total_queries": len(mock_queries),
+                "avg_authenticity": 8.0,
+                "categories_covered": ["direct_recommendation", "comparative_analysis", "feature_inquiry", "indirect_recommendation"],
+                "archetypes_covered": len(top_archetypes),
+                "mock_generated": True
+            },
+            "framework_compliance": True
+        }
+
 
 # Factory function for backwards compatibility
 def create_query_generator(

@@ -1,6 +1,6 @@
 # src/stage1/llm/archetype_builder.py
 """
-LLM-powered archetype builder replacing mock implementation.
+LLM-powered archetype builder with fixed import handling.
 """
 import json
 import asyncio
@@ -66,7 +66,7 @@ Archetypes to rank:
 
 Consider:
 1. Market size and presence
-2. Brand fit and positioning alignment  
+2. Brand fit and alignment  
 3. Revenue potential
 4. Competitive vulnerability
 5. AI research behavior patterns
@@ -121,7 +121,7 @@ Return JSON:
 }}"""
 
 class LLMArchetypeBuilder:
-    """LLM-powered customer archetype builder with fallback capabilities."""
+    """LLM-powered customer archetype builder with robust fallback capabilities."""
     
     def __init__(
         self,
@@ -131,14 +131,64 @@ class LLMArchetypeBuilder:
         self.ollama_config = ollama_config or OllamaConfig()
         self.fallback_to_mock = fallback_to_mock
         self.prompts = ArchetypePrompts()
+        self.mock_builder = None
         
-        # Load mock builder for fallback
+        # Initialize mock builder for fallback
         if fallback_to_mock:
-            import sys
-            import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-            from archetype_builder import ArchetypeBuilder as MockBuilder
-            self.mock_builder = MockBuilder()
+            self.mock_builder = self._create_mock_builder()
+    
+    def _create_mock_builder(self):
+        """Create mock builder with proper import handling."""
+        try:
+            mock_builder = self._try_import_mock_builder()
+            if mock_builder:
+                return mock_builder
+            else:
+                logger.warning("Could not import mock builder - using internal fallback")
+                return InternalMockBuilder()
+        except Exception as e:
+            logger.warning(f"Mock builder import failed: {e} - using internal fallback")
+            return InternalMockBuilder()
+    
+    def _try_import_mock_builder(self):
+        """Try different strategies to import the mock builder."""
+        import importlib.util
+        
+        # Strategy 1: Try direct import from stage1
+        try:
+            current_dir = os.path.dirname(__file__)
+            mock_file_path = os.path.join(current_dir, '..', 'archetype_builder.py')
+            mock_file_path = os.path.abspath(mock_file_path)
+            
+            if os.path.exists(mock_file_path):
+                spec = importlib.util.spec_from_file_location("mock_archetype_builder", mock_file_path)
+                if spec and spec.loader:
+                    mock_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mock_module)
+                    
+                    if hasattr(mock_module, 'ArchetypeBuilder'):
+                        logger.info("Successfully imported mock ArchetypeBuilder")
+                        return mock_module.ArchetypeBuilder()
+        except Exception as e:
+            logger.debug(f"Strategy 1 failed: {e}")
+        
+        # Strategy 2: Try sys.path manipulation
+        try:
+            original_path = sys.path.copy()
+            stage1_path = os.path.join(os.path.dirname(__file__), '..')
+            if stage1_path not in sys.path:
+                sys.path.insert(0, stage1_path)
+            
+            from archetype_builder import ArchetypeBuilder
+            sys.path = original_path
+            logger.info("Successfully imported mock ArchetypeBuilder via sys.path")
+            return ArchetypeBuilder()
+            
+        except Exception as e:
+            logger.debug(f"Strategy 2 failed: {e}")
+            sys.path = original_path
+        
+        return None
     
     async def generate_archetypes(
         self,
@@ -219,7 +269,7 @@ class LLMArchetypeBuilder:
         
         request = LLMRequest(
             prompt=prompt,
-            temperature=0.4,  # Moderate creativity for persona generation
+            temperature=0.4,
             max_tokens=1200,
             system_prompt="You are a customer psychology expert. Create distinct, realistic customer archetypes with valid JSON."
         )
@@ -233,7 +283,6 @@ class LLMArchetypeBuilder:
             result = json.loads(response.content)
             return result.get("archetypes", [])
         except json.JSONDecodeError:
-            # Try to extract JSON
             extracted = self._extract_json_from_response(response.content)
             return extracted.get("archetypes", [])
     
@@ -245,7 +294,6 @@ class LLMArchetypeBuilder:
     ) -> List[Dict[str, Any]]:
         """Refine AI behavior predictions for each archetype."""
         
-        # Limit to top archetypes for efficiency
         top_archetypes = archetypes[:4]
         
         prompt = self.prompts.BEHAVIORAL_REFINEMENT.format(
@@ -265,10 +313,7 @@ class LLMArchetypeBuilder:
             try:
                 result = json.loads(response.content)
                 refined = result.get("refined_archetypes", [])
-                
-                # Merge refinements back into original archetypes
                 return self._merge_behavioral_refinements(archetypes, refined)
-                
             except json.JSONDecodeError:
                 logger.warning("Failed to parse behavioral refinements, using original archetypes")
         
@@ -286,12 +331,12 @@ class LLMArchetypeBuilder:
         prompt = self.prompts.ARCHETYPE_RANKING.format(
             brand_name=brand_context.brand_name,
             category=category_intelligence.get("category", "product"),
-            archetypes=json.dumps(archetypes[:5], indent=2)  # Limit for context size
+            archetypes=json.dumps(archetypes[:5], indent=2)
         )
         
         request = LLMRequest(
             prompt=prompt,
-            temperature=0.2,  # Lower temperature for analytical ranking
+            temperature=0.2,
             max_tokens=600,
             system_prompt="You are a strategic marketing expert. Rank customer archetypes by business value."
         )
@@ -346,7 +391,6 @@ class LLMArchetypeBuilder:
     ) -> List[Dict[str, Any]]:
         """Merge behavioral refinements into original archetypes."""
         
-        # Create lookup for refinements by archetype_id
         refinement_lookup = {
             ref.get("archetype_id"): ref 
             for ref in refinements
@@ -354,11 +398,9 @@ class LLMArchetypeBuilder:
         
         merged = []
         for archetype in original_archetypes:
-            arch_id = archetype.get("archetype")
-            refinement = refinement_lookup.get(arch_id, {})
-
-            # Merge refinement data
             merged_archetype = archetype.copy()
+            arch_id = archetype.get("archetype_id")
+            refinement = refinement_lookup.get(arch_id, {})
             
             if refinement:
                 merged_archetype.update({
@@ -368,7 +410,6 @@ class LLMArchetypeBuilder:
                     "communication_style": refinement.get("communication_style", "casual")
                 })
                 
-                # Enhanced AI behavior prediction
                 if refinement.get("ai_query_patterns"):
                     merged_archetype["ai_behavior_prediction"] = (
                         f"{merged_archetype.get('ai_behavior_prediction', '')} "
@@ -387,11 +428,9 @@ class LLMArchetypeBuilder:
     ) -> Dict[str, Any]:
         """Combine all archetype analysis into final result."""
         
-        # Get ranking information
         ranked_ids = [r.get("archetype_id") for r in ranking_analysis.get("ranked_archetypes", [])]
         top_archetype_ids = ranking_analysis.get("top_archetypes", ranked_ids[:2])
         
-        # Sort archetypes by ranking
         ranked_archetypes = []
         archetype_lookup = {arch.get("archetype_id"): arch for arch in refined_archetypes}
         
@@ -399,7 +438,6 @@ class LLMArchetypeBuilder:
             if ranked_id in archetype_lookup:
                 archetype = archetype_lookup[ranked_id].copy()
                 
-                # Add ranking info
                 ranking_info = next(
                     (r for r in ranking_analysis.get("ranked_archetypes", []) 
                      if r.get("archetype_id") == ranked_id),
@@ -415,18 +453,15 @@ class LLMArchetypeBuilder:
                 
                 ranked_archetypes.append(archetype)
         
-        # Add any archetypes not in ranking
         for archetype in refined_archetypes:
             if archetype.get("archetype_id") not in ranked_ids:
                 ranked_archetypes.append(archetype)
         
-        # Get top archetypes for execution
         top_archetypes = [
             arch for arch in ranked_archetypes 
             if arch.get("archetype_id") in top_archetype_ids
         ]
         
-        # Calculate metadata
         confidences = [arch.get("confidence", 0.8) for arch in ranked_archetypes]
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0.8
         
@@ -438,7 +473,7 @@ class LLMArchetypeBuilder:
             "generation_metadata": {
                 "total_archetypes": len(ranked_archetypes),
                 "avg_confidence": avg_confidence,
-                "coverage_score": min(len(ranked_archetypes) / 5.0, 1.0),  # Assume 5 is ideal
+                "coverage_score": min(len(ranked_archetypes) / 5.0, 1.0),
                 "llm_generated": True,
                 "strategic_insights": ranking_analysis.get("strategic_insights", [])
             }
@@ -448,7 +483,6 @@ class LLMArchetypeBuilder:
         """Extract JSON from LLM response that may contain extra text."""
         import re
         
-        # Look for JSON objects
         json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
         matches = re.findall(json_pattern, content, re.DOTALL)
         
@@ -467,60 +501,134 @@ class LLMArchetypeBuilder:
         brand_context: BrandContext
     ) -> Dict[str, Any]:
         """Fallback to mock implementation."""
-        if hasattr(self, 'mock_builder'):
-            return self.mock_builder.generate_archetypes(category_intelligence, brand_context)
-        else:
-            # Emergency fallback
-            category = category_intelligence.get("category", "product")
-            
-            return {
-                "universal_attributes": category_intelligence.get("universal_attributes", {}),
-                "category_attributes": category_intelligence.get("category_attributes", {}),
-                "ranked_archetypes": [
-                    {
-                        "archetype_id": "ARCH_001",
-                        "name": f"Quality-Focused {category.title()} Customer",
-                        "description": f"Premium customer seeking high-quality {category} solutions",
-                        "attributes": {
-                            "COREB1": "QUALITY_CONNOISSEUR",
-                            "MODIFIERE1": "STATUS_SIGNAL",
-                            "MODIFIERD3": "PREMIUM",
-                            "COREA2": "RESEARCH",
-                            "DEMOD2": "URBAN_FAST",
-                            "COREB3": "BRAND_AWARE"
-                        },
-                        "market_presence": "HIGH",
-                        "strategic_value": "HIGH",
-                        "confidence": 0.85,
-                        "ai_behavior_prediction": "Seeks detailed comparisons and expert reviews"
-                    }
-                ],
-                "top_archetypes": [
-                    {
-                        "archetype_id": "ARCH_001",
-                        "name": f"Quality-Focused {category.title()} Customer",
-                        "description": f"Premium customer seeking high-quality {category} solutions",
-                        "attributes": {
-                            "COREB1": "QUALITY_CONNOISSEUR",
-                            "MODIFIERE1": "STATUS_SIGNAL", 
-                            "MODIFIERD3": "PREMIUM",
-                            "COREA2": "RESEARCH",
-                            "DEMOD2": "URBAN_FAST",
-                            "COREB3": "BRAND_AWARE"
-                        },
-                        "market_presence": "HIGH",
-                        "strategic_value": "HIGH",
-                        "confidence": 0.85,
-                        "ai_behavior_prediction": "Seeks detailed comparisons and expert reviews"
-                    }
-                ],
-                "generation_metadata": {
-                    "total_archetypes": 1,
-                    "avg_confidence": 0.85,
-                    "coverage_score": 0.7,
-                    "fallback_used": True
-                }
+        if self.mock_builder:
+            try:
+                return self.mock_builder.generate_archetypes(category_intelligence, brand_context)
+            except Exception as e:
+                logger.warning(f"Mock builder failed: {e}")
+        
+        return self._create_emergency_fallback(category_intelligence, brand_context)
+    
+    def _create_emergency_fallback(
+        self,
+        category_intelligence: Dict[str, Any],
+        brand_context: BrandContext
+    ) -> Dict[str, Any]:
+        """Create emergency fallback when all else fails."""
+        category = category_intelligence.get("category", "product")
+        
+        emergency_archetype = {
+            "archetype_id": "ARCH_001",
+            "name": f"Quality-Focused {category.title()} Customer",
+            "description": f"Premium customer seeking high-quality {category} solutions",
+            "attributes": {
+                "COREB1": "QUALITY_CONNOISSEUR",
+                "MODIFIERE1": "STATUS_SIGNAL",
+                "MODIFIERD3": "PREMIUM",
+                "COREA2": "RESEARCH",
+                "DEMOD2": "URBAN_FAST",
+                "COREB3": "BRAND_AWARE"
+            },
+            "market_presence": "HIGH",
+            "strategic_value": "HIGH",
+            "confidence": 0.85,
+            "ai_behavior_prediction": "Seeks detailed comparisons and expert reviews"
+        }
+        
+        return {
+            "universal_attributes": category_intelligence.get("universal_attributes", {}),
+            "category_attributes": category_intelligence.get("category_attributes", {}),
+            "ranked_archetypes": [emergency_archetype],
+            "top_archetypes": [emergency_archetype],
+            "generation_metadata": {
+                "total_archetypes": 1,
+                "avg_confidence": 0.85,
+                "coverage_score": 0.7,
+                "emergency_fallback": True
             }
+        }
+
+
+class InternalMockBuilder:
+    """Internal mock implementation when external mock is unavailable."""
+    
+    def generate_archetypes(
+        self,
+        category_intelligence: Dict[str, Any],
+        brand_context: BrandContext
+    ) -> Dict[str, Any]:
+        """Generate mock customer archetypes."""
+        
+        logger.info("Using internal mock builder")
+        category = category_intelligence.get("category", "product")
+        
+        mock_archetypes = [
+            {
+                "archetype_id": "ARCH_001",
+                "name": f"Premium {category.title()} Enthusiast",
+                "description": f"High-income customer seeking premium {category} with top features",
+                "attributes": {
+                    "COREB1": "QUALITY_CONNOISSEUR",
+                    "MODIFIERE1": "STATUS_SIGNAL",
+                    "MODIFIERD3": "PREMIUM",
+                    "COREA2": "RESEARCH",
+                    "DEMOD2": "URBAN_FAST",
+                    "COREB3": "BRAND_AWARE"
+                },
+                "market_presence": "HIGH",
+                "strategic_value": "HIGH",
+                "confidence": 0.9,
+                "ai_behavior_prediction": "Asks detailed questions about premium features and brand comparisons"
+            },
+            {
+                "archetype_id": "ARCH_002",
+                "name": f"Smart {category.title()} Shopper",
+                "description": f"Value-conscious customer seeking best {category} for their budget",
+                "attributes": {
+                    "COREB1": "BUSY_PRACTICAL",
+                    "MODIFIERE1": "SMART_SHOPPER",
+                    "MODIFIERD3": "MIDRANGE",
+                    "COREA2": "QUICK_STORE",
+                    "DEMOD2": "SUBURBAN_FAMILY",
+                    "COREB3": "BRAND_NEUTRAL"
+                },
+                "market_presence": "HIGH",
+                "strategic_value": "MEDIUM",
+                "confidence": 0.85,
+                "ai_behavior_prediction": "Seeks quick recommendations with clear value propositions"
+            },
+            {
+                "archetype_id": "ARCH_003",
+                "name": f"Budget {category.title()} Buyer",
+                "description": f"Price-sensitive customer looking for functional {category} at lowest cost",
+                "attributes": {
+                    "COREB1": "BUSY_PRACTICAL",
+                    "MODIFIERE1": "SMART_SHOPPER",
+                    "MODIFIERD3": "BUDGET",
+                    "COREA2": "ROUTINE_ONLINE",
+                    "DEMOD2": "SUBURBAN_FAMILY",
+                    "COREB3": "BRAND_BLIND"
+                },
+                "market_presence": "MEDIUM",
+                "strategic_value": "LOW",
+                "confidence": 0.8,
+                "ai_behavior_prediction": "Focuses on price comparisons and basic functionality"
+            }
+        ]
+        
+        return {
+            "universal_attributes": category_intelligence.get("universal_attributes", {}),
+            "category_attributes": category_intelligence.get("category_attributes", {}),
+            "ranked_archetypes": mock_archetypes,
+            "top_archetypes": mock_archetypes[:2],
+            "generation_metadata": {
+                "total_archetypes": len(mock_archetypes),
+                "avg_confidence": 0.85,
+                "coverage_score": 0.8,
+                "mock_generated": True
+            }
+        }
+
 
 # Factory function for backwards compatibility
 def create_archetype_builder(

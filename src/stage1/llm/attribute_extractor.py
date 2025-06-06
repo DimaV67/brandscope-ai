@@ -1,6 +1,6 @@
 # src/stage1/llm/attribute_extractor.py
 """
-LLM-powered attribute extractor replacing mock implementation.
+LLM-powered attribute extractor with fixed import handling.
 """
 import json
 import sys
@@ -108,7 +108,7 @@ Return JSON mapping category insights to universal attributes:
 }}"""
 
 class LLMAttributeExtractor:
-    """LLM-powered attribute extractor with fallback to mock for development."""
+    """LLM-powered attribute extractor with robust fallback handling."""
     
     def __init__(
         self, 
@@ -118,14 +118,66 @@ class LLMAttributeExtractor:
         self.ollama_config = ollama_config or OllamaConfig()
         self.fallback_to_mock = fallback_to_mock
         self.prompts = CategoryAnalysisPrompts()
+        self.mock_extractor = None
         
-        # Load mock extractor for fallback
+        # Initialize mock extractor for fallback
         if fallback_to_mock:
-            import sys
-            import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-            from attribute_extractor import AttributeExtractor as MockExtractor
-            self.mock_extractor = MockExtractor()
+            self.mock_extractor = self._create_mock_extractor()
+    
+    def _create_mock_extractor(self):
+        """Create mock extractor with proper import handling."""
+        try:
+            # Try multiple import strategies
+            mock_extractor = self._try_import_mock_extractor()
+            if mock_extractor:
+                return mock_extractor
+            else:
+                logger.warning("Could not import mock extractor - using internal fallback")
+                return InternalMockExtractor()
+        except Exception as e:
+            logger.warning(f"Mock extractor import failed: {e} - using internal fallback")
+            return InternalMockExtractor()
+    
+    def _try_import_mock_extractor(self):
+        """Try different strategies to import the mock extractor."""
+        import importlib.util
+        
+        # Strategy 1: Try direct import from stage1
+        try:
+            # Get the absolute path to the mock file
+            current_dir = os.path.dirname(__file__)
+            mock_file_path = os.path.join(current_dir, '..', 'attribute_extractor.py')
+            mock_file_path = os.path.abspath(mock_file_path)
+            
+            if os.path.exists(mock_file_path):
+                spec = importlib.util.spec_from_file_location("mock_attribute_extractor", mock_file_path)
+                if spec and spec.loader:
+                    mock_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mock_module)
+                    
+                    if hasattr(mock_module, 'AttributeExtractor'):
+                        logger.info("Successfully imported mock AttributeExtractor")
+                        return mock_module.AttributeExtractor()
+        except Exception as e:
+            logger.debug(f"Strategy 1 failed: {e}")
+        
+        # Strategy 2: Try sys.path manipulation
+        try:
+            original_path = sys.path.copy()
+            stage1_path = os.path.join(os.path.dirname(__file__), '..')
+            if stage1_path not in sys.path:
+                sys.path.insert(0, stage1_path)
+            
+            from attribute_extractor import AttributeExtractor
+            sys.path = original_path
+            logger.info("Successfully imported mock AttributeExtractor via sys.path")
+            return AttributeExtractor()
+            
+        except Exception as e:
+            logger.debug(f"Strategy 2 failed: {e}")
+            sys.path = original_path
+        
+        return None
     
     async def generate_category_intelligence(
         self,
@@ -204,7 +256,7 @@ class LLMAttributeExtractor:
         
         request = LLMRequest(
             prompt=prompt,
-            temperature=0.3,  # Lower temperature for analytical tasks
+            temperature=0.3,
             max_tokens=800,
             system_prompt="You are a market research expert. Always respond with valid JSON."
         )
@@ -285,7 +337,7 @@ class LLMAttributeExtractor:
         
         request = LLMRequest(
             prompt=prompt,
-            temperature=0.1,  # Very low temperature for structured mapping
+            temperature=0.1,
             max_tokens=400,
             system_prompt="You are a customer psychology expert. Map categories to universal behavioral attributes with valid JSON."
         )
@@ -386,7 +438,6 @@ Make attributes relevant to actual {category} customer behavior."""
     
     def _extract_json_from_response(self, content: str) -> Dict[str, Any]:
         """Extract JSON from LLM response that may contain extra text."""
-        # Find JSON-like content between braces
         import re
         
         json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
@@ -408,42 +459,132 @@ Make attributes relevant to actual {category} customer behavior."""
         customer_narrative: Optional[str] = None
     ) -> Dict[str, Any]:
         """Fallback to mock implementation."""
-        if hasattr(self, 'mock_extractor'):
-            return self.mock_extractor.generate_category_intelligence(
-                category, brand_context, customer_narrative
-            )
-        else:
-            # Emergency fallback
-            return {
-                "category": category,
-                "brand_context": brand_context.brand_name,
-                "universal_attributes": {
-                    "COREB1": ["QUALITY_CONNOISSEUR", "BUSY_PRACTICAL"],
-                    "MODIFIERE1": ["SMART_SHOPPER", "STATUS_SIGNAL"],
-                    "MODIFIERD3": ["BUDGET", "MIDRANGE", "PREMIUM"],
-                    "COREA2": ["RESEARCH", "QUICK_STORE"],
-                    "DEMOD2": ["URBAN_FAST", "SUBURBAN_FAMILY"],
-                    "COREB3": ["BRAND_AWARE", "BRAND_NEUTRAL"]
-                },
-                "category_attributes": {
-                    f"{category.upper()}_USE_CASE": ["primary_use", "secondary_use"],
-                    f"{category.upper()}_EXPERTISE": ["beginner", "expert"],
-                    f"{category.upper()}_PRIORITY": ["function", "price"]
-                },
-                "competitive_landscape": {
-                    "primary_competitors": brand_context.competitive_context.primary_competitors,
-                    "market_segments": ["premium", "mainstream", "budget"],
-                    "positioning_opportunities": ["quality_leader", "value_leader"]
-                },
-                "price_ranges": {
-                    "BUDGET": "< $100",
-                    "MIDRANGE": "$100 - $300",
-                    "PREMIUM": "> $300"
-                },
-                "fallback_used": True
-            }
+        if self.mock_extractor:
+            try:
+                return self.mock_extractor.generate_category_intelligence(
+                    category, brand_context, customer_narrative
+                )
+            except Exception as e:
+                logger.warning(f"Mock extractor failed: {e}")
+        
+        # Final fallback
+        return self._create_emergency_fallback(category, brand_context)
+    
+    def _create_emergency_fallback(
+        self,
+        category: str,
+        brand_context: BrandContext
+    ) -> Dict[str, Any]:
+        """Create emergency fallback when all else fails."""
+        logger.warning("Using emergency fallback - all other methods failed")
+        return {
+            "category": category,
+            "brand_context": brand_context.brand_name,
+            "universal_attributes": {
+                "COREB1": ["QUALITY_CONNOISSEUR", "BUSY_PRACTICAL"],
+                "MODIFIERE1": ["SMART_SHOPPER", "STATUS_SIGNAL"],
+                "MODIFIERD3": ["BUDGET", "MIDRANGE", "PREMIUM"],
+                "COREA2": ["RESEARCH", "QUICK_STORE"],
+                "DEMOD2": ["URBAN_FAST", "SUBURBAN_FAMILY"],
+                "COREB3": ["BRAND_AWARE", "BRAND_NEUTRAL"]
+            },
+            "category_attributes": {
+                f"{category.upper()}_USE_CASE": ["primary_use", "secondary_use"],
+                f"{category.upper()}_EXPERTISE": ["beginner", "expert"],
+                f"{category.upper()}_PRIORITY": ["function", "price"]
+            },
+            "competitive_landscape": {
+                "primary_competitors": brand_context.competitive_context.primary_competitors,
+                "market_segments": ["premium", "mainstream", "budget"],
+                "positioning_opportunities": ["quality_leader", "value_leader"]
+            },
+            "price_ranges": {
+                "BUDGET": "< $100",
+                "MIDRANGE": "$100 - $300",
+                "PREMIUM": "> $300"
+            },
+            "emergency_fallback": True
+        }
 
-# Convenience function for backwards compatibility
+
+class InternalMockExtractor:
+    """Internal mock implementation when external mock is unavailable."""
+    
+    def generate_category_intelligence(
+        self,
+        category: str,
+        brand_context: BrandContext,
+        customer_narrative: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Generate mock category intelligence."""
+        
+        logger.info("Using internal mock extractor")
+        
+        return {
+            "category": category,
+            "brand_context": brand_context.brand_name,
+            "universal_attributes": {
+                "COREB1": ["QUALITY_CONNOISSEUR", "BUSY_PRACTICAL"],
+                "MODIFIERE1": ["SMART_SHOPPER", "STATUS_SIGNAL"],
+                "MODIFIERD3": ["BUDGET", "MIDRANGE", "PREMIUM"],
+                "COREA2": ["RESEARCH", "QUICK_STORE"],
+                "DEMOD2": ["URBAN_FAST", "SUBURBAN_FAMILY"],
+                "COREB3": ["BRAND_AWARE", "BRAND_NEUTRAL"]
+            },
+            "category_attributes": {
+                f"{category.upper()}_USE_CASE": ["primary_use", "secondary_use"],
+                f"{category.upper()}_EXPERTISE": ["beginner", "intermediate", "expert"],
+                f"{category.upper()}_PRIORITY": ["function", "design", "price"]
+            },
+            "competitive_landscape": {
+                "primary_competitors": brand_context.competitive_context.primary_competitors,
+                "market_segments": [
+                    {"segment": "premium", "leaders": brand_context.competitive_context.primary_competitors[:2], "positioning_gap": "Quality"},
+                    {"segment": "mainstream", "leaders": brand_context.competitive_context.primary_competitors, "positioning_gap": "Value"},
+                    {"segment": "budget", "leaders": ["Generic"], "positioning_gap": "Price"}
+                ],
+                "positioning_opportunities": [
+                    {"opportunity": "quality_leader", "target_segment": "quality_focused", "competitive_advantage": "Superior quality"}
+                ]
+            },
+            "price_ranges": {
+                "BUDGET": "Entry-level pricing",
+                "MIDRANGE": "Competitive pricing",
+                "PREMIUM": "Premium pricing"
+            },
+            "category_insights": {
+                "characteristics": {
+                    "market_maturity": "mature",
+                    "purchase_frequency": "yearly",
+                    "decision_complexity": "medium",
+                    "brand_importance": "medium"
+                },
+                "customer_segments": [
+                    {
+                        "segment_name": "Quality Seekers",
+                        "size_percentage": 30,
+                        "key_motivations": ["quality", "reliability"],
+                        "price_sensitivity": "low"
+                    },
+                    {
+                        "segment_name": "Value Buyers",
+                        "size_percentage": 50,
+                        "key_motivations": ["value", "functionality"],
+                        "price_sensitivity": "medium"
+                    },
+                    {
+                        "segment_name": "Budget Conscious",
+                        "size_percentage": 20,
+                        "key_motivations": ["price", "basic_features"],
+                        "price_sensitivity": "high"
+                    }
+                ],
+                "mock_generated": True
+            }
+        }
+
+
+# Factory function for backwards compatibility
 def create_attribute_extractor(
     use_llm: bool = True,
     ollama_config: Optional[OllamaConfig] = None
