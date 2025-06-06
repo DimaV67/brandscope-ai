@@ -46,7 +46,6 @@ class LLMRequest:
     system_prompt: Optional[str] = None
     stream: bool = False
 
-    
     def to_ollama_format(self, default_model: str) -> Dict:
         """Convert to Ollama API format"""
         payload = {
@@ -60,8 +59,10 @@ class LLMRequest:
                 "repeat_penalty": self.repeat_penalty
             }
         }
-        if self.max_tokens: payload["options"]["num_predict"] = self.max_tokens
-        if self.system_prompt: payload["system"] = self.system_prompt
+        if self.max_tokens: 
+            payload["options"]["num_predict"] = self.max_tokens
+        if self.system_prompt: 
+            payload["system"] = self.system_prompt
         return payload
 
 @dataclass
@@ -91,7 +92,7 @@ class OllamaClient:
         self.config = config or OllamaConfig()
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(self.config.timeout))
         self._available_models: Optional[List[str]] = None
-        self._last_health_check: bool = False
+        self._last_health_check: Optional[float] = None
         
     async def __aenter__(self):
         return self
@@ -100,60 +101,194 @@ class OllamaClient:
         await self.client.aclose()
 
     def _extract_json_from_response(self, content: str) -> Dict[str, Any]:
-        """Extracts a JSON object from a string, handling markdown code fences."""
-        match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
-        if match:
-            json_str = match.group(1)
-            try: return json.loads(json_str)
-            except json.JSONDecodeError: pass
+        """Improved JSON extraction with multiple strategies."""
+        if not content or not content.strip():
+            raise json.JSONDecodeError("Empty content", content, 0)
+        
+        content = content.strip()
+        
+        # Strategy 0: Handle the specific meta-instruction pattern we're seeing
+        # If the response starts with {"context": "customer psychology expert", "instructions":
+        # This indicates the model is returning instructions instead of content
+        if content.startswith('{"context":') or content.startswith('{"instructions":'):
+            logger.warning("Model returned meta-instructions instead of content")
+            raise json.JSONDecodeError("Meta-instructions detected, not actual content", content, 0)
+        
+        # Strategy 1: Try direct JSON parsing first
         try:
-            start = content.find('{')
-            end = content.rfind('}') + 1
-            if start != -1 and end != 0: return json.loads(content[start:end])
-        except json.JSONDecodeError as e: raise e # Re-raise to be caught by self-correction loop
-        logger.warning("Could not extract any JSON-like object from response.")
-        raise json.JSONDecodeError("No JSON object found", content, 0)
+            return json.loads(content)
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 2: Look for markdown code blocks with JSON
+        markdown_patterns = [
+            r'```json\s*(\{.*?\})\s*```',
+            r'```\s*(\{.*?\})\s*```',
+        ]
+        
+        for pattern in markdown_patterns:
+            match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+            if match:
+                json_str = match.group(1).strip()
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    continue
+        
+        # Strategy 3: Find JSON objects in the text
+        # Look for balanced braces
+        def find_json_objects(text: str) -> List[str]:
+            objects = []
+            i = 0
+            while i < len(text):
+                if text[i] == '{':
+                    brace_count = 1
+                    start = i
+                    i += 1
+                    while i < len(text) and brace_count > 0:
+                        if text[i] == '{':
+                            brace_count += 1
+                        elif text[i] == '}':
+                            brace_count -= 1
+                        i += 1
+                    if brace_count == 0:
+                        candidate = text[start:i]
+                        # Skip if it looks like meta-instructions
+                        if not ('"context":' in candidate or '"instructions":' in candidate):
+                            objects.append(candidate)
+                else:
+                    i += 1
+            return objects
+        
+        json_candidates = find_json_objects(content)
+        for candidate in json_candidates:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+        
+        # Strategy 4: Try to clean and parse the entire content
+        # Remove common prefixes and suffixes
+        cleaned = content
+        prefixes_to_remove = [
+            "Here's the JSON:",
+            "Here is the JSON:",
+            "The JSON response is:",
+            "JSON:",
+            "```json",
+            "```"
+        ]
+        
+        for prefix in prefixes_to_remove:
+            if cleaned.lower().startswith(prefix.lower()):
+                cleaned = cleaned[len(prefix):].strip()
+        
+        # Remove trailing markdown
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3].strip()
+        
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 5: Try to find and extract just the JSON part
+        # Look for anything that starts with { and ends with }
+        start_idx = content.find('{')
+        end_idx = content.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            candidate = content[start_idx:end_idx + 1]
+            # Skip if it looks like meta-instructions
+            if not ('"context":' in candidate or '"instructions":' in candidate):
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    pass
+        
+        logger.warning(f"Could not extract JSON from response. Content: {content[:200]}...")
+        raise json.JSONDecodeError("No valid JSON object found", content, 0)
 
-    # ADDED: New self-correcting method for generating JSON
     async def generate_json_with_self_correction(
-        self, request: LLMRequest, retries: int = 1
+        self, request: LLMRequest, retries: int = 2
     ) -> Tuple[Dict[str, Any], int]:
-        """Generates a JSON response, with a self-correction retry loop."""
+        """Enhanced JSON generation with better self-correction."""
         total_tokens = 0
-        try:
-            response = await self.generate(request)
-            total_tokens += response.tokens_used
-            if not response.success:
-                logger.error(f"Initial LLM request failed: {response.error}")
-                return {}, total_tokens
+        last_error = None
+        
+        for attempt in range(retries + 1):
+            try:
+                # Enhance the prompt to be more explicit about JSON requirements
+                if attempt == 0:
+                    enhanced_prompt = f"""{request.prompt}
 
-            parsed_json = self._extract_json_from_response(response.content)
-            return parsed_json, total_tokens
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse JSON on first attempt: {e}. Retrying with self-correction.")
-            if retries > 0:
-                correction_prompt = (
-                    f"The following response resulted in a JSON parsing error.\n"
-                    f"ERROR: {e}\n"
-                    f"FAULTY TEXT: ```\n{response.content}\n```\n\n"
-                    f"Please correct the JSON syntax and provide ONLY the valid JSON object, with no other text."
-                )
-                request.prompt = correction_prompt
-                # Use a more capable model for correction
-                request.model = ModelType.GENERAL.value 
+CRITICAL INSTRUCTIONS:
+1. Respond ONLY with valid JSON
+2. Do not include any explanatory text before or after the JSON
+3. Do not use markdown code blocks (no ```)
+4. Ensure all JSON is properly formatted with correct syntax
+5. Use double quotes for all strings
+6. End with a complete JSON object"""
+                    
+                    enhanced_request = LLMRequest(
+                        prompt=enhanced_prompt,
+                        model=request.model,
+                        temperature=max(0.1, request.temperature - 0.2),  # Lower temperature for structured output
+                        max_tokens=request.max_tokens,
+                        system_prompt="You are a JSON generator. Always respond with valid JSON only.",
+                        top_p=0.9,
+                        top_k=40
+                    )
+                else:
+                    # For retries, use the correction prompt
+                    enhanced_request = request
                 
-                # Recursive call with one less retry
-                corrected_json, correction_tokens = await self.generate_json_with_self_correction(
-                    request, retries - 1
-                )
-                total_tokens += correction_tokens
-                return corrected_json, total_tokens
-            else:
-                logger.error("JSON self-correction failed after multiple retries.")
-                return {}, total_tokens
+                response = await self.generate(enhanced_request)
+                total_tokens += response.tokens_used
+                
+                if not response.success:
+                    last_error = f"LLM request failed: {response.error}"
+                    logger.warning(f"Attempt {attempt + 1} failed: {last_error}")
+                    continue
+
+                # Try to extract JSON
+                try:
+                    parsed_json = self._extract_json_from_response(response.content)
+                    logger.debug(f"Successfully parsed JSON on attempt {attempt + 1}")
+                    return parsed_json, total_tokens
+                except json.JSONDecodeError as e:
+                    last_error = f"JSON parsing error: {e}"
+                    logger.warning(f"Attempt {attempt + 1} JSON parse failed: {last_error}")
+                    
+                    if attempt < retries:
+                        # Create a correction prompt
+                        correction_prompt = f"""The previous response failed to parse as valid JSON.
+
+ERROR: {last_error}
+FAULTY RESPONSE: 
+{response.content}
+
+Please provide a corrected version that is ONLY valid JSON with no additional text.
+Original request was: {request.prompt[:500]}...
+
+Respond with ONLY the corrected JSON object."""
+                        
+                        request = LLMRequest(
+                            prompt=correction_prompt,
+                            model="llama3.2",  # Use a reliable model for correction
+                            temperature=0.1,
+                            max_tokens=request.max_tokens,
+                            system_prompt="Fix the JSON. Respond only with valid JSON."
+                        )
+                    
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                logger.error(f"Attempt {attempt + 1} failed with exception: {last_error}")
+        
+        logger.error(f"All JSON generation attempts failed. Last error: {last_error}")
+        return {}, total_tokens
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-
     async def generate(self, request: LLMRequest) -> LLMResponse:
         """Generate completion with automatic retry logic"""
         start_time = time.time()
@@ -214,47 +349,22 @@ class OllamaClient:
                 error=f"Unexpected error: {str(e)}"
             )
     
-    async def stream_generate(self, request: LLMRequest) -> AsyncGenerator[LLMResponse, None]:
-        """Stream generation with proper async handling"""
+    async def health_check(self) -> bool:
+        """Check if Ollama is responsive with caching."""
+        current_time = time.time()
+        
+        # Use cached result if recent
+        if self._last_health_check and (current_time - self._last_health_check < 30):
+            return True
+        
         try:
-            request.stream = True
-            payload = request.to_ollama_format(self.config.default_model)
-            
-            logger.debug(f"Starting stream from Ollama: {payload['model']}")
-            
-            async with self.client.stream(
-                "POST",
-                f"{self.config.base_url}/api/generate",
-                json=payload
-            ) as response:
-                response.raise_for_status()
-                
-                async for line in response.aiter_lines():
-                    if line.strip():
-                        try:
-                            chunk = json.loads(line)
-                            
-                            if chunk.get("response"):
-                                yield LLMResponse(
-                                    content=chunk["response"],
-                                    model=chunk.get("model", payload["model"]),
-                                    provider="ollama",
-                                    metadata={
-                                        "done": chunk.get("done", False),
-                                        "is_stream": True
-                                    }
-                                )
-                                
-                        except json.JSONDecodeError:
-                            continue
-                            
-        except Exception as e:
-            logger.error(f"Stream generation failed: {e}")
-            yield LLMResponse(
-                content="",
-                model=request.model or self.config.default_model,
-                error=f"Stream failed: {str(e)}"
-            )
+            response = await self.client.get(f"{self.config.base_url}/", timeout=5.0)
+            if response.status_code == 200:
+                self._last_health_check = current_time
+                return True
+            return False
+        except Exception:
+            return False
     
     async def list_models(self) -> List[Dict]:
         """Get available models with caching"""
@@ -271,98 +381,43 @@ class OllamaClient:
             logger.error(f"Failed to list models: {e}")
             return []
     
-    async def get_model_info(self, model_name: str) -> Optional[Dict]:
-        """Get detailed information about a specific model"""
-        try:
-            response = await self.client.post(
-                f"{self.config.base_url}/api/show",
-                json={"name": model_name}
-            )
-            response.raise_for_status()
-            return response.json()
-            
-        except Exception as e:
-            logger.error(f"Failed to get model info for {model_name}: {e}")
-            return None
-    
-    async def health_check(self) -> bool:
-        """Check if Ollama is responsive with caching."""
-        current_time = time.time()
-        
-        # Use the cached result if it's recent
-        if self._last_health_check and (current_time - self._last_health_check < 30):
-            return True
-        
-        try:
-            # More lightweight health check
-            response = await self.client.get(f"{self.config.base_url}/", timeout=5.0)
-            if response.status_code == 200:
-                self._last_health_check = current_time
-                return True
-            return False
-        except Exception:
-            return False
-        
-    async def pull_model(self, model_name: str) -> bool:
-        """Pull a model if not available"""
-        try:
-            logger.info(f"Pulling model: {model_name}")
-            
-            response = await self.client.post(
-                f"{self.config.base_url}/api/pull",
-                json={"name": model_name},
-                timeout=600.0  # 10 minutes for model download
-            )
-            
-            response.raise_for_status()
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to pull model {model_name}: {e}")
-            return False
-    
-    async def ensure_model_available(self, model_name: str) -> bool:
-        """Ensure a model is available, pull if necessary"""
-        if self._available_models is None:
-            await self.list_models()
-        
-        if model_name in (self._available_models or []):
-            return True
-        
-        logger.info(f"Model {model_name} not found locally, attempting to pull...")
-        return await self.pull_model(model_name)
-    
     async def close(self):
         """Clean up resources"""
         await self.client.aclose()
 
-# Convenience functions for common operations
+# Test function
 async def test_ollama_connection(config: Optional[OllamaConfig] = None) -> Dict:
     """Test Ollama connection and return status"""
     async with OllamaClient(config) as client:
         status = {
             "healthy": await client.health_check(),
             "models": [],
-            "test_generation": None
+            "test_generation": None,
+            "error": None
         }
         
         if status["healthy"]:
-            status["models"] = await client.list_models()
-            
-            # Test basic generation
-            test_request = LLMRequest(
-                prompt="Hello! Respond with exactly: 'Ollama connection successful'",
-                temperature=0.1,
-                max_tokens=10
-            )
-            
-            response = await client.generate(test_request)
-            status["test_generation"] = {
-                "success": response.success,
-                "content": response.content,
-                "error": response.error,
-                "response_time": response.metadata.get("response_time") if response.metadata else None
-            }
+            try:
+                status["models"] = await client.list_models()
+                
+                # Test basic generation
+                test_request = LLMRequest(
+                    prompt="Respond with exactly this JSON: {\"test\": \"success\", \"status\": \"working\"}",
+                    temperature=0.1,
+                    max_tokens=50
+                )
+                
+                response = await client.generate(test_request)
+                status["test_generation"] = {
+                    "success": response.success,
+                    "content": response.content,
+                    "error": response.error,
+                    "response_time": response.metadata.get("response_time") if response.metadata else None
+                }
+            except Exception as e:
+                status["error"] = str(e)
+        else:
+            status["error"] = "Health check failed"
         
         return status
 
