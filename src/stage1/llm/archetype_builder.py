@@ -12,7 +12,7 @@ from dataclasses import dataclass
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from llm.ollama_client import OllamaClient, LLMRequest, OllamaConfig
+from src.llm.ollama_client import OllamaClient, LLMRequest, OllamaConfig
 from models.brand import BrandContext
 from utils.logging import get_logger
 

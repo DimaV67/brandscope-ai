@@ -53,7 +53,8 @@ docs = [
 ]
 
 [project.scripts]
-brandscope = "src.cli:main"
+# CORRECTED: Pointed to the 'cli' function instead of 'main'
+brandscope = "src.cli:cli"
 
 [tool.black]
 line-length = 88
@@ -111,3 +112,9 @@ markers = [
 [tool.bandit]
 exclude_dirs = ["tests", "build", "dist"]
 skips = ["B101", "B601"]
+
+# ADDED: Correct section for the build system
+[tool.hatch.build.targets.wheel]
+# This line tells the builder that your package's source code 
+# is located inside the "src" directory.
+packages = ["src/"]

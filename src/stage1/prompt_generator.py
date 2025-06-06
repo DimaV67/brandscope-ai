@@ -13,9 +13,9 @@ from ..core.project_manager import BrandAuditProject
 from ..utils.config import get_config
 from ..utils.logging import get_logger
 from ..utils.exceptions import StageExecutionError, LLMError
-from .attribute_extractor import AttributeExtractor
-from .archetype_builder import ArchetypeBuilder
-from .query_generator import QueryGenerator
+from src.stage1.llm.attribute_extractor import LLMAttributeExtractor
+from src.stage1.llm.archetype_builder import LLMArchetypeBuilder
+from src.stage1.llm.query_generator import LLMQueryGenerator
 
 
 logger = get_logger(__name__)
@@ -38,9 +38,9 @@ class Stage1Generator:
         self.correlation_id = str(uuid4())
         
         # Initialize components
-        self.attribute_extractor = AttributeExtractor()
-        self.archetype_builder = ArchetypeBuilder()
-        self.query_generator = QueryGenerator()
+        self.attribute_extractor = LLMAttributeExtractor()
+        self.archetype_builder = LLMArchetypeBuilder()
+        self.query_generator = LLMQueryGenerator()
         
         logger.set_context(
             correlation_id=self.correlation_id,

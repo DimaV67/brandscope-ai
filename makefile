@@ -57,7 +57,7 @@ docker-dev: ## Build development Docker image
 	docker build -f Dockerfile.dev -t $(PROJECT_NAME):dev .
 
 run: ## Run the CLI (when entry point is configured)
-	$(PYTHON) -m src
+	$(PYTHON) -m src.main
 
 demo: ## Create a demo project
 	@echo "Demo mode - creating sample project"
