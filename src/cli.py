@@ -3,6 +3,7 @@ Interactive menu-driven CLI for Brandscope AI Brand Audit System.
 """
 import sys
 import json
+import asyncio
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -227,12 +228,12 @@ class BrandscopeCLI:
                 click.echo("Regeneration cancelled.")
         
         elif action == "stage2":
-            execute_stage2_command(self.current_project)
+            asyncio.run(execute_stage2_command(self.current_project))
         
         elif action == "regenerate_stage2":
             if click.confirm("\nThis will overwrite existing Stage 2 outputs. Are you sure?", default=False):
                 click.echo("🔄 Regenerating Stage 2 prompts...")
-                execute_stage2_command(self.current_project)
+                asyncio.run(execute_stage2_command(self.current_project))
             else:
                 click.echo("Regeneration cancelled.")
         
