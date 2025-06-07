@@ -18,6 +18,7 @@ from src.utils.exceptions import (
 )
 from src.utils.logging import get_logger, setup_logging
 from src.commands.stage1 import execute_stage1
+from src.commands.stage2 import execute_stage2_command, show_stage2_status, validate_stage2_prerequisites
 
 
 logger = get_logger(__name__)
@@ -116,9 +117,10 @@ class BrandscopeCLI:
         click.echo(f"📊 Status: {status['current_stage']} ({status['completion_percentage']}%)")
         click.echo("=" * 50)
         
+        # Show stage status
         stages = [
             ("Stage 1: Prompt Generation", status['stage1_complete']),
-            ("Stage 2: Manual Execution", status['stage2_complete']),
+            ("Stage 2: AI Prompt Creation", status['stage2_complete']),
             ("Stage 3: Analysis Processing", status['stage3_complete'])
         ]
         
@@ -127,51 +129,63 @@ class BrandscopeCLI:
             click.echo(f"{icon} {stage_name}")
         click.echo()
         
+        # Build dynamic menu options
         options = []
         actions = []
         
+        # Stage 1 options
         if project.config.stage_status['stage1'].status == StageStatusEnum.PENDING:
             options.append("🚀 Generate Stage 1 Prompts")
             actions.append("stage1")
         else:
             options.append("📊 View Stage 1 Results")
             actions.append("view_stage1")
-            options.append("🔄 Regenerate Stage 1 Files")
+            options.append("🔄 Regenerate Stage 1")
             actions.append("regenerate_stage1")
         
+        # Stage 2 options
         if status['stage1_complete']:
-            if not status['stage2_started']:
-                options.append("▶️  Start Stage 2 (Manual Execution)")
-                actions.append("start_stage2")
-            elif status['stage2_in_progress']:
-                options.append("📋 View Stage 2 Guide")
-                actions.append("view_guide")
-                options.append("📤 Upload Stage 2 Results")
-                actions.append("upload_stage2")
-            elif status['stage2_complete']:
+            stage2_status = project.config.stage_status.get('stage2', type('obj', (object,), {'status': StageStatusEnum.PENDING})()).status
+            
+            if stage2_status == StageStatusEnum.PENDING:
+                options.append("🚀 Generate Stage 2 Prompts")
+                actions.append("stage2")
+            elif stage2_status in [StageStatusEnum.IN_PROGRESS, StageStatusEnum.COMPLETE]:
                 options.append("📊 View Stage 2 Results")
                 actions.append("view_stage2")
-                if not status['stage3_complete']:
-                    options.append("🚀 Generate Stage 3 Analysis")
-                    actions.append("stage3")
-
+                options.append("🔄 Regenerate Stage 2")
+                actions.append("regenerate_stage2")
+                
+                # Check if manual execution is needed
+                if not status['stage2_complete']:
+                    options.append("📋 View Execution Guide")
+                    actions.append("view_execution_guide")
+                    options.append("📤 Upload Manual Results")
+                    actions.append("upload_results")
+        
+        # Stage 3 options (future)
+        if status['stage2_complete']:
+            options.append("🚀 Generate Stage 3 Analysis (Coming Soon)")
+            actions.append("stage3")
+        
+        # Always available options
         options.extend([
-            "📁 Browse Project Files", "⚙️  Project Settings", "🔄 Refresh Status",
-            "🔙 Back to Main Menu", "❓ Help", "🚪 Exit"
+            "📁 Browse Project Files", 
+            "⚙️  Project Settings", 
+            "🔄 Refresh Status",
+            "🔙 Back to Main Menu", 
+            "❓ Help", 
+            "🚪 Exit"
         ])
         actions.extend(["files", "settings", "refresh", "close", "help", "exit"])
         
-        # Remove duplicates while preserving order
-        unique_options = dict(zip(actions, options))
-        final_actions = list(unique_options.keys())
-        final_options = list(unique_options.values())
-        
-        for i, option in enumerate(final_options, 1):
+        # Display menu
+        for i, option in enumerate(options, 1):
             click.echo(f"{i:2d}. {option}")
         click.echo()
         
-        choice = click.prompt("Select option", type=click.IntRange(1, len(final_options)))
-        action = final_actions[choice - 1]
+        choice = click.prompt("Select option", type=click.IntRange(1, len(options)))
+        action = actions[choice - 1]
         
         try:
             self.handle_project_action(action)
@@ -182,6 +196,65 @@ class BrandscopeCLI:
             if self.config.debug:
                 import traceback
                 traceback.print_exc()
+            self.pause()
+
+    def handle_project_action(self, action: str) -> None:
+        """Handle project-specific actions."""
+        if action == "stage1":
+            execute_stage1(self.current_project)
+        
+        elif action == "regenerate_stage1":
+            if click.confirm("\nThis will overwrite existing Stage 1 outputs. Are you sure?", default=False):
+                click.clear()
+                click.echo("📝 Provide New Inputs for Stage 1 Regeneration\n" + "=" * 40)
+                brand_context, customer_narrative, category = self._get_project_inputs_from_user()
+
+                click.echo("\n🔄 Overwriting input files...")
+                brand_path = self.current_project.get_file_path("inputs/brand_context.json")
+                with open(brand_path, 'w') as f:
+                    f.write(brand_context.model_dump_json(indent=2))
+
+                narrative_path = self.current_project.get_file_path("inputs/customer_narrative.txt")
+                if customer_narrative:
+                    with open(narrative_path, 'w') as f:
+                        f.write(customer_narrative)
+                elif narrative_path.exists():
+                    narrative_path.unlink()
+                
+                click.echo("✅ Inputs updated. Starting regeneration...")
+                execute_stage1(self.current_project)
+            else:
+                click.echo("Regeneration cancelled.")
+        
+        elif action == "stage2":
+            execute_stage2_command(self.current_project)
+        
+        elif action == "regenerate_stage2":
+            if click.confirm("\nThis will overwrite existing Stage 2 outputs. Are you sure?", default=False):
+                click.echo("🔄 Regenerating Stage 2 prompts...")
+                execute_stage2_command(self.current_project)
+            else:
+                click.echo("Regeneration cancelled.")
+        
+        elif action in ("view_stage1", "view_stage2", "view_execution_guide", "upload_results", 
+                       "files", "settings", "refresh", "close", "help", "exit"):
+            handler_map = {
+                "view_stage1": self.view_stage1_results,
+                "view_stage2": self.view_stage2_results,
+                "view_execution_guide": self.view_execution_guide,
+                "upload_results": self.upload_manual_results,
+                "files": self.browse_project_files,
+                "settings": self.show_project_settings,
+                "refresh": self.refresh_status,
+                "close": self.close_project,
+                "help": self.show_project_help,
+                "exit": self.exit_app
+            }
+            handler_map[action]()
+        else:
+            click.echo(f"Action '{action}' not implemented yet.")
+        
+        if action not in ["close", "exit"]:
             self.pause()
 
     def _get_project_inputs_from_user(self) -> Tuple[BrandContext, Optional[str], str]:
@@ -218,7 +291,9 @@ class BrandscopeCLI:
                 competitors.append(competitor)
         
         brand_context = BrandContext(
-            brand_name=brand_name, products=products, competitive_context=CompetitiveContext(primary_competitors=competitors)
+            brand_name=brand_name, 
+            products=products, 
+            competitive_context=CompetitiveContext(primary_competitors=competitors)
         )
         
         customer_narrative = None
@@ -243,7 +318,9 @@ class BrandscopeCLI:
         
         click.echo("\n🔄 Creating project...")
         project = self.project_manager.create_project(
-            brand_context=brand_context, category=category, customer_narrative=customer_narrative
+            brand_context=brand_context, 
+            category=category, 
+            customer_narrative=customer_narrative
         )
         
         click.echo(f"✅ Project created: {project.project_id}")
@@ -274,70 +351,13 @@ class BrandscopeCLI:
                        f"     ID: {project['project_id']}\n")
         
         choice = click.prompt(f"Select project (1-{len(projects)} or 0 to cancel)", type=click.IntRange(0, len(projects)))
-        if choice == 0: return
+        if choice == 0: 
+            return
         
         selected = projects[choice - 1]
         self.current_project = self.project_manager.load_project(selected['project_id'])
         click.echo(f"✅ Opened project: {self.current_project.display_name}")
         self.pause()
-    
-    def handle_project_action(self, action: str) -> None:
-        """Handle project-specific actions."""
-        if action == "stage1":
-            execute_stage1(self.current_project)
-        
-        elif action == "regenerate_stage1":
-            if click.confirm("\nThis will overwrite existing input files and Stage 1 outputs. Are you sure?", default=False):
-                click.clear()
-                click.echo("📝 Provide New Inputs for Regeneration\n" + "=" * 30)
-                brand_context, customer_narrative, category = self._get_project_inputs_from_user()
-
-                click.echo("\n🔄 Overwriting input files...")
-                brand_path = self.current_project.get_file_path("inputs/brand_context.json")
-                with open(brand_path, 'w') as f:
-                    f.write(brand_context.model_dump_json(indent=2))
-
-                narrative_path = self.current_project.get_file_path("inputs/customer_narrative.txt")
-                if customer_narrative:
-                    with open(narrative_path, 'w') as f:
-                        f.write(customer_narrative)
-                elif narrative_path.exists():
-                    narrative_path.unlink()
-                
-                click.echo("✅ Inputs updated. Starting regeneration...")
-                execute_stage1(self.current_project)
-            else:
-                click.echo("Regeneration cancelled.")
-
-        elif action in ("view_stage1", "start_stage2", "view_guide", "files", "settings", "refresh", "close", "help", "exit"):
-            handler_map = {
-                "view_stage1": self.view_stage1_results, "start_stage2": self.start_stage2,
-                "view_guide": self.view_execution_guide, "files": self.browse_project_files,
-                "settings": self.show_project_settings, "refresh": self.refresh_status,
-                "close": self.close_project, "help": self.show_project_help,
-                "exit": self.exit_app
-            }
-            handler_map[action]()
-        else:
-            click.echo(f"Action '{action}' not implemented yet.")
-        
-        if action != "close":
-            self.pause()
-
-    def refresh_status(self):
-        """Reloads the project config and shows a message."""
-        self.current_project._load_config()
-        click.echo("✅ Status refreshed.")
-
-    def close_project(self):
-        """Closes the current project."""
-        click.echo(f"📁 Closed project: {self.current_project.display_name}")
-        self.current_project = None
-
-    def exit_app(self):
-        """Exits the application."""
-        click.echo("\n👋 Thanks for using Brandscope AI!")
-        sys.exit(0)
     
     def view_stage1_results(self) -> None:
         """View Stage 1 generation results."""
@@ -369,29 +389,25 @@ class BrandscopeCLI:
             except Exception:
                 pass
     
-    def start_stage2(self) -> None:
-        """Start Stage 2 manual execution."""
-        guide_path = self.current_project.project_path / "stage2_execution" / "manual_execution_guide.md"
-        
-        if not guide_path.exists():
-            click.echo("❌ Execution guide not found. Run Stage 1 first.")
-            return
-        
-        self.current_project.update_stage_status("stage2", StageStatusEnum.IN_PROGRESS)
-        
-        click.echo("\n▶️  Stage 2 Started\n" + "=" * 25)
-        click.echo("✅ Status updated to 'In Progress'")
-        click.echo(f"📋 Execution guide: {guide_path.name}")
-        click.echo(f"📁 Save responses to: stage2_execution/")
-        click.echo("\n💡 Use 'View Stage 2 Guide' to see detailed instructions.")
+    def view_stage2_results(self) -> None:
+        """View Stage 2 generation results."""
+        show_stage2_status(self.current_project)
     
     def view_execution_guide(self) -> None:
         """View Stage 2 execution guide."""
-        guide_path = self.current_project.project_path / "stage2_execution" / "manual_execution_guide.md"
+        stage2_path = self.current_project.project_path / "stage2_execution"
         
-        if not guide_path.exists():
-            click.echo("❌ Execution guide not found.")
+        if not stage2_path.exists():
+            click.echo("❌ Stage 2 execution directory not found.")
             return
+        
+        guide_files = list(stage2_path.glob("*guide*.md"))
+        
+        if not guide_files:
+            click.echo("❌ Execution guide not found. Generate Stage 2 first.")
+            return
+        
+        guide_path = sorted(guide_files)[-1]  # Get latest guide
         
         try:
             with open(guide_path, 'r') as f:
@@ -399,29 +415,83 @@ class BrandscopeCLI:
             
             click.echo("\n📋 Execution Guide Preview\n" + "=" * 40)
             lines = content.split('\n')
-            for line in lines[:25]:
+            
+            # Show first 30 lines
+            for line in lines[:30]:
                 click.echo(line)
             
-            if len(lines) > 25:
-                click.echo(f"\n... ({len(lines) - 25} more lines)")
+            if len(lines) > 30:
+                click.echo(f"\n... ({len(lines) - 30} more lines)")
                 if click.confirm("Show full guide?", default=False):
-                    click.echo("".join(lines[25:]))
+                    for line in lines[30:]:
+                        click.echo(line)
             
             click.echo(f"\n📁 Full guide location: {guide_path}")
             
         except Exception as e:
             click.echo(f"❌ Error reading guide: {e}")
     
+    def upload_manual_results(self) -> None:
+        """Upload manual execution results for analysis."""
+        stage2_path = self.current_project.project_path / "stage2_execution"
+        
+        if not stage2_path.exists():
+            click.echo("❌ Stage 2 execution directory not found.")
+            return
+        
+        # Check for response files
+        natural_dir = stage2_path / "natural_dataset"
+        controlled_dir = stage2_path / "controlled_dataset"
+        
+        natural_responses = list(natural_dir.glob("*.json")) if natural_dir.exists() else []
+        controlled_responses = list(controlled_dir.glob("*.json")) if controlled_dir.exists() else []
+        
+        click.echo(f"\n📤 Manual Results Upload Status")
+        click.echo("=" * 40)
+        click.echo(f"Natural responses found: {len(natural_responses)}")
+        click.echo(f"Controlled responses found: {len(controlled_responses)}")
+        
+        if not natural_responses and not controlled_responses:
+            click.echo("❌ No response files found.")
+            click.echo("💡 Complete manual execution first following the execution guide.")
+            return
+        
+        # Validate file structure
+        click.echo("\n🔍 Validating file structure...")
+        
+        valid_files = 0
+        total_files = len(natural_responses) + len(controlled_responses)
+        
+        for file_path in natural_responses + controlled_responses:
+            try:
+                with open(file_path, 'r') as f:
+                    json.load(f)  # Validate JSON
+                valid_files += 1
+            except json.JSONDecodeError:
+                click.echo(f"❌ Invalid JSON: {file_path.name}")
+        
+        click.echo(f"✅ Valid files: {valid_files}/{total_files}")
+        
+        if valid_files > 0:
+            # Update project status to indicate manual execution complete
+            self.current_project.update_stage_status("stage2", StageStatusEnum.COMPLETE)
+            click.echo("✅ Manual execution results validated and uploaded")
+            click.echo("🚀 Ready to proceed to Stage 3 analysis")
+        else:
+            click.echo("❌ No valid response files found")
+    
     def browse_project_files(self) -> None:
         """Browse project file structure."""
         click.echo(f"\n📁 Project Files - {self.current_project.display_name}\n" + "=" * 50)
         
         def show_directory(path: Path, prefix: str = "", max_depth: int = 3) -> None:
-            if max_depth <= 0: return
+            if max_depth <= 0: 
+                return
             try:
                 items = sorted(list(path.iterdir()), key=lambda x: (x.is_file(), x.name))
                 for item in items:
-                    if item.name.startswith('.'): continue
+                    if item.name.startswith('.'): 
+                        continue
                     if item.is_dir():
                         click.echo(f"{prefix}📁 {item.name}/")
                         if any(item.iterdir()):
@@ -429,7 +499,8 @@ class BrandscopeCLI:
                     else:
                         size_kb = item.stat().st_size / 1024
                         click.echo(f"{prefix}📄 {item.name} ({size_kb:.1f} KB)")
-            except OSError: pass
+            except OSError: 
+                pass
         
         show_directory(self.current_project.project_path)
     
@@ -485,40 +556,66 @@ class BrandscopeCLI:
         click.echo("📋 Workflow:\n"
                    "   1. Create project with brand/product info\n"
                    "   2. Generate Stage 1 prompts and archetypes\n"
-                   "   3. Execute manual AI testing (Stage 2)\n"
-                   "   4. Upload results for analysis (Stage 3)")
+                   "   3. Generate Stage 2 AI prompts (natural & controlled)\n"
+                   "   4. Execute manual AI testing across platforms\n"
+                   "   5. Upload results for analysis (Stage 3)")
         click.echo("\n💡 Tips:\n"
                    "   - Use clear, specific brand/product names\n"
                    "   - Add competitor info for better analysis\n"
                    "   - Customer narratives improve accuracy\n"
-                   "   - Stage 1 generates 15-20 test queries")
+                   "   - Stage 1 generates customer archetypes\n"
+                   "   - Stage 2 creates platform-ready prompts")
         self.pause()
     
     def show_project_help(self) -> None:
         """Show project-specific help."""
         status = self.current_project.get_status()
         click.echo("\n❓ Project Help\n" + "=" * 20)
+        
         if not status['stage1_complete']:
             click.echo("🚀 Next: Generate Stage 1 prompts\n"
                        "   This creates customer archetypes and test queries")
         elif not status['stage2_started']:
-            click.echo("▶️  Next: Start Stage 2 manual execution\n"
-                       "   This begins the AI testing process")
+            click.echo("🚀 Next: Generate Stage 2 prompts\n"
+                       "   This creates natural and controlled AI prompts")
         elif status['stage2_in_progress']:
-            click.echo("📋 Next: Follow the execution guide\n"
-                       "   Test queries on AI platforms and save responses")
+            click.echo("📋 Next: Complete manual execution\n"
+                       "   Follow execution guide to test prompts on AI platforms")
         elif status['stage2_complete']:
-            click.echo("🚀 Next: Generate Stage 3 analysis\n"
-                       "   This analyzes results and creates insights")
+            click.echo("📤 Next: Upload manual results or generate analysis\n"
+                       "   Upload response files or proceed to Stage 3")
         else:
             click.echo("✅ Project complete!")
+        
+        click.echo("\n🔧 Available Actions:")
+        click.echo("   • View results: See generated files and status")
+        click.echo("   • Regenerate: Re-run any stage with new inputs")
+        click.echo("   • Browse files: Explore project directory")
+        click.echo("   • Settings: View project configuration")
+        
         self.pause()
+    
+    def refresh_status(self):
+        """Reloads the project config and shows a message."""
+        self.current_project._load_config()
+        click.echo("✅ Status refreshed.")
+
+    def close_project(self):
+        """Closes the current project."""
+        click.echo(f"📁 Closed project: {self.current_project.display_name}")
+        self.current_project = None
+
+    def exit_app(self):
+        """Exits the application."""
+        click.echo("\n👋 Thanks for using Brandscope AI!")
+        sys.exit(0)
     
     def pause(self) -> None:
         """Pause for user input."""
         click.echo()
         click.prompt("Press Enter to continue", default="", show_default=False)
         click.clear()
+
 
 @click.command()
 @click.option('--debug', is_flag=True, help='Enable debug mode')
@@ -530,6 +627,7 @@ def cli(debug: bool) -> None:
         app.config.debug = True
         app.config.log_level = "DEBUG"
     app.run()
+
 
 if __name__ == '__main__':
     cli()
